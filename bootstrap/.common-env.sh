@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Source from Bash; keep the caller's shell options unchanged.
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+if [[ -s "$NVM_DIR/nvm.sh" ]]; then
+  source "$NVM_DIR/nvm.sh"
+fi
