@@ -17,6 +17,8 @@ Do not invoke npx, the runner, or a Codex task; install, update, sign in, write 
 permissions, or alter services or network policy. Report missing prerequisites
 for the human to resolve, then wait for a task.
 
+On receipt, offer an optional Codex workspace readiness check to identify missing tools or dependencies that could improve development efficiency. Only run this check with explicit human approval. Codex must report missing tooling rather than install it or silently work around it.
+
 ## Remote boundaries and security
 
 ChatGPT's local sandbox and the connected VM are separate environments. Use Remote
