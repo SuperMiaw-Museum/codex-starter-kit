@@ -92,6 +92,6 @@ that a task succeeded.
 
 ## Verify and report
 
-Inspect the process exit status and output, review changes, and run relevant
-checks before reporting success. Summarize the result, validation performed, and
-any remaining blockers. Report failures accurately, including incomplete work.
+Once the human explicitly requests a follow-up, inspect the task's exit status and output, review changes, and run relevant checks before reporting success. Summarize the result, validation performed, and any remaining blockers. Report failures accurately, including incomplete work.
+
+Do not automatically monitor or retrieve results after launching a Codex task.
