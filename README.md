@@ -1,62 +1,98 @@
 # codex-starter-kit
 
-Reusable project instructions and a remote workflow: ChatGPT coordinates work
-through Remote Desktop Commander; Codex CLI edits and checks your existing project
-on a Linux VM. You review the results.
+A starting point for working on projects with ChatGPT and Codex CLI in
+an isolated Linux VM. ChatGPT connects through Remote Desktop Commander; Codex
+edits and checks your project, and you review the results. Adapt the instructions
+and templates to your needs.
+
+## Architecture Overview
+
+```mermaid
+flowchart TB
+    subgraph Command
+        direction LR
+        U["👤 User"] <--> C["ChatGPT"]
+    end
+
+    C <-->|"Remote access"| RDC
+
+    subgraph Sandbox
+        RDC["Remote Desktop Commander"]
+        D["Direct Execution"]
+        A["Codex CLI"]
+        N["Task Notifications"]
+
+        RDC --> D
+        RDC --> A
+        D -.-> N
+        A -.-> N
+    end
+
+    N -.-> U
+```
 
 ## Getting started
 
-1. **Prepare an isolated Linux VM.** Use a nonprivileged account without
-   administrative access. Install Bash, Git, Python 3, Node.js with npm/npx,
-   Codex CLI, and your project's tools; complete Codex sign-in as that account.
-   Before connecting,
-   configure a firewall **outside the VM** to block access to the LAN, host, and
-   management services while permitting necessary Internet access and any trusted
-   administration access. Keep a VM console available.
+1. **Prepare the VM.** Follow [Security](#security) before connecting. Use a
+   nonprivileged account without administrative access. Install Bash, Git,
+   Python 3, Node.js with npm/npx, Codex CLI, and your project's tools. Complete
+   Codex sign-in as that account.
 
-2. **Clone this starter kit on the VM.** In the nonprivileged account's
-   terminal, replace the URL below with this repository's clone URL:
+2. **Clone this kit on the VM.** In that account's terminal, replace the placeholder
+   with this repository's clone URL:
 
    ```bash
-   git clone <starter-kit-repository-url> ~/codex-starter-kit
+   git clone https://github.com/SuperMiaw/codex-starter-kit ~/codex-starter-kit
    ```
 
-3. **Manually start the bridge on the VM.** Run this in the VM terminal
-   **before ChatGPT can access the VM remotely**:
+3. **Start the bridge yourself.** Run this in the VM terminal before ChatGPT can
+   access it remotely, and keep it running:
 
    ```bash
    ~/codex-starter-kit/bootstrap/remote-control.sh
    ```
 
-   Keep it running. It prints a copy/paste banner and connection information; the first run
-   may download the bridge. ChatGPT cannot perform this initial startup for you.
+   The first run may download the bridge. It prints connection information and a
+   short instruction to paste into ChatGPT.
 
-4. **Connect ChatGPT.** In the **ChatGPT web app**, connect/configure the
-   **Remote Desktop Commander plugin** using the bridge's connection information
-   and the plugin's instructions. You need an account where the plugin is available;
-   this kit does not install or configure it. Keep connection tokens private.
+4. **Connect ChatGPT.** In the ChatGPT web app, configure the **Remote Desktop
+   Commander plugin** using the bridge's connection information and the plugin's
+   instructions. Your account must have access to the plugin; this kit does not
+   install or configure it.
 
-5. **Paste the instruction from the banner.** Copy the launcher's short instruction
-   into that ChatGPT conversation. It asks ChatGPT to read
-   [bootstrap/PROMPT.md](bootstrap/PROMPT.md) via Remote Desktop Commander using
-   its actual absolute VM path. Nothing is sent automatically; the file remains
-   available to read directly. This initializes working instructions only:
-   **ChatGPT acknowledges and waits; it does not start tasks or change the environment.**
-   You may explicitly request a read-only connectivity/prerequisite check.
+5. **Paste the banner's instruction into the conversation.** It tells ChatGPT to
+   read [bootstrap/PROMPT.md](bootstrap/PROMPT.md) at its actual absolute VM path.
+   Nothing is sent automatically. ChatGPT acknowledges the instructions and waits
+   without starting tasks or changing the environment. Explicitly request a
+   read-only connectivity/prerequisite check if wanted.
 
-6. **Begin work in an existing source project.** Give ChatGPT the project's
-   absolute VM path, desired change, and acceptance checks. Optionally copy and
-   adapt a suitable [project template](templates/)
-   into that project's root as `AGENTS.md`; reconcile any
-   existing instructions before replacing them. ChatGPT reads the project
-   instructions, delegates requested work to Codex, and reviews the result.
-   Keep the project in its existing directory; do not initialize Git for this setup.
-   Review changes before committing, publishing, or deploying.
+6. **Give ChatGPT a task.** Supply your existing project's absolute VM path, the
+   desired change, and acceptance checks. Optionally adapt a [project template](#project-templates)
+   as the project's root `AGENTS.md`, reconciling existing instructions before
+   replacing them. ChatGPT reads those instructions, delegates work to Codex, and
+   reviews the result. Keep the existing project directory; do not initialize Git
+   for this setup. Check task output and exit status; START/END notifications are
+   best effort.
 
-**Security:** use a disposable VM and backups. Keep production credentials,
-personal files, and host mounts out of it. NAT and Codex's workspace sandbox do
-not replace VM/network isolation. The human manages firewall policy; agents must
-not weaken it. Remote commands can affect anything the account can access.
+For runner commands and notification examples, see
+[bootstrap/PROMPT.md](bootstrap/PROMPT.md). Confirm absolute bundle and project
+paths on the VM before running tasks; ChatGPT's local sandbox paths are separate.
+
+## Security
+
+- **Before connecting, configure a firewall outside the VM.** Block access to the
+  LAN, host, and management services while allowing necessary Internet access and
+  any trusted administration access. Keep a VM console available. The human
+  manages firewall policy; agents must not weaken it.
+- Use a disposable, isolated VM and keep backups. Keep production credentials,
+  personal files, and host mounts out of it. NAT and Codex's workspace sandbox do
+  not replace VM/network isolation.
+- Keep connection tokens private. Remote commands can affect anything the VM
+  account can access.
+- When syncing files, exclude secrets and local configuration and use only trusted
+  administration access allowed by the firewall. Keep Git operations and final
+  review/integration on your trusted local machine.
+- Review changes before committing, publishing, or deploying.
 
 ## Project templates
 
@@ -67,28 +103,7 @@ not weaken it. Remote commands can affect anything the account can access.
 - [FreeBSD script](templates/script-freebsd/AGENTS.md)
 - [Legacy project](templates/legacy/AGENTS.md)
 
-## Optional personal workflow
+## Going Further
 
-One example is to keep Codex in an isolated VM and use rsync over SSH from a
-trusted host to exchange project files, excluding secrets and local configuration.
-Keep Git operations and final review/integration on the trusted host. Transfers
-should use the trusted administration access allowed by the firewall policy.
-This is an optional example, not a requirement for using this kit.
-
-## Reference
-
-[bootstrap/PROMPT.md](bootstrap/PROMPT.md) contains operational instructions,
-runner usage, and notification examples. Adapt its home-relative example paths
-to the VM and explicitly confirm the resolved absolute bundle and project paths
-before running tasks. ChatGPT's local sandbox paths are separate from VM paths.
-
-The runner sends **START** and **END** terminal notifications automatically;
-END includes status, duration, and a best-effort bell in eligible terminals
-(including SSH). Delivery depends on Python 3, accessible same-UID terminals
-enumerated under `/dev/pts`, and client settings. Always check task output and exit status.
-
-## License and disclaimer
-
-[Unlicense](LICENSE): public domain, provided **as is**, without warranty.
-This personal, opinionated workflow is an example to adapt to your environment;
-you remain responsible for its use and for reviewing changes.
+Optionally use [codex-sync](https://github.com/SuperMiaw/codex-sync) to sync projects
+between your local machine and sandbox.
