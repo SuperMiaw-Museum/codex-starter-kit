@@ -44,8 +44,8 @@ on a Linux VM. You review the results.
 
 6. **Begin work in an existing source project.** Give ChatGPT the project's
    absolute VM path, desired change, and acceptance checks. Optionally copy and
-   adapt a suitable [app](templates/apps/) or [script](templates/scripts/)
-   `AGENTS.md` template into that project's root as `AGENTS.md`; reconcile any
+   adapt a suitable [project template](templates/)
+   into that project's root as `AGENTS.md`; reconcile any
    existing instructions before replacing them. ChatGPT reads the project
    instructions, delegates requested work to Codex, and reviews the result.
    Keep the project in its existing directory; do not initialize Git for this setup.
@@ -55,6 +55,15 @@ on a Linux VM. You review the results.
 personal files, and host mounts out of it. NAT and Codex's workspace sandbox do
 not replace VM/network isolation. The human manages firewall policy; agents must
 not weaken it. Remote commands can affect anything the account can access.
+
+## Project templates
+
+- [FastAPI backend](templates/fastapi-backend/AGENTS.md)
+- [Alpine frontend](templates/alpine-frontend/AGENTS.md)
+- [Python CLI](templates/python-cli/AGENTS.md)
+- [Debian script](templates/script-debian/AGENTS.md)
+- [FreeBSD script](templates/script-freebsd/AGENTS.md)
+- [Legacy project](templates/legacy/AGENTS.md)
 
 ## Optional personal workflow
 
