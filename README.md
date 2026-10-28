@@ -28,7 +28,7 @@ on a Linux VM. You review the results.
    ~/codex-starter-kit/bootstrap/remote-control.sh
    ```
 
-   Keep it running. It prints the prompt and connection information; the first run
+   Keep it running. It prints a copy/paste banner and connection information; the first run
    may download the bridge. ChatGPT cannot perform this initial startup for you.
 
 4. **Connect ChatGPT.** In the **ChatGPT web app**, connect/configure the
@@ -36,9 +36,11 @@ on a Linux VM. You review the results.
    and the plugin's instructions. You need an account where the plugin is available;
    this kit does not install or configure it. Keep connection tokens private.
 
-5. **Paste the instructions.** Copy the contents of
-   [bootstrap/PROMPT.md](bootstrap/PROMPT.md) into that ChatGPT conversation (also
-   printed by the launcher). This initializes working instructions only:
+5. **Paste the instruction from the banner.** Copy the launcher's short instruction
+   into that ChatGPT conversation. It asks ChatGPT to read
+   [bootstrap/PROMPT.md](bootstrap/PROMPT.md) via Remote Desktop Commander using
+   its actual absolute VM path. Nothing is sent automatically; the file remains
+   available to read directly. This initializes working instructions only:
    **ChatGPT acknowledges and waits; it does not start tasks or change the environment.**
    You may explicitly request a read-only connectivity/prerequisite check.
 
