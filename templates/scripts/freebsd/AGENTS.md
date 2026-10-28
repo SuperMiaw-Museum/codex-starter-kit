@@ -13,6 +13,7 @@ Write small, maintainable FreeBSD administration scripts. Prefer native system u
 - Prefer FreeBSD-native commands and options; do not assume GNU-specific flags or Linux filesystem layouts.
 - Keep scripts self-contained where practical. Introduce external dependencies only when justified and document them.
 - Use descriptive snake_case names for new scripts, consistent with the repository.
+- When creating or modifying shell scripts, prefer meaningful emoji prefixes on existing or newly authored human-facing status messages (✅ success, ⚠️ warning, ❌ error, ℹ️ information). Preserve machine-readable output, stdout data streams, stable output contracts, and script behavior; leave unrelated messages alone and avoid cosmetic churn. Retain plain text where cron or non-UTF-8 locales require it.
 
 ## Formatting and readability
 

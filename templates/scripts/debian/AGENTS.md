@@ -13,6 +13,7 @@ Write small, maintainable Debian administration scripts. Prefer native system ut
 - Prefer Debian-native tools and GNU/Linux conventions; do not assume FreeBSD command flags or filesystem layouts.
 - Keep scripts self-contained where practical. Introduce external dependencies only when justified and document them.
 - Use descriptive snake_case names for new scripts, consistent with the repository.
+- When creating or modifying shell scripts, prefer meaningful emoji prefixes on existing or newly authored human-facing status messages (✅ success, ⚠️ warning, ❌ error, ℹ️ information). Preserve machine-readable output, stdout data streams, stable output contracts, and script behavior; leave unrelated messages alone and avoid cosmetic churn. Retain plain text where cron or non-UTF-8 locales require it.
 - Allow Fish shell helpers for interactive workflows (functions, aliases, and completions) when useful. Keep administration scripts in Bash; Fish helpers should invoke them rather than duplicate their logic.
 - Generate Fish helpers only when the task or project requires them. Do not assume Fish is installed on the target system.
 - When Fish helpers are provided, include a bootstrap script to install or update them in the appropriate user-level Fish directories (such as `~/.config/fish/functions/` and `~/.config/fish/completions/`).
