@@ -16,7 +16,7 @@ Build maintainable Python command-line tools with a consistent, lightweight stac
 
 - Keep application source in `app/` and focused tests in `tests/`. Add `specs/` for significant features and `scripts/` for development, maintenance, or administration utilities only when useful; do not create empty directories or unnecessary layers.
 - Use `data/` for persistent user data, including SQLite databases when used; exclude it from version control and never treat it as disposable build output.
-- Use `conf/` for local application configuration; exclude it from version control except for safe tracked examples or defaults under `conf/sample/`. Never commit secrets or private environment-specific settings.
+- When needed, use `conf/` for local application configuration and exclude it from version control. Keep sanitized, tracked examples or defaults in the sibling `conf.sample/` directory only when needed. Never commit secrets or private environment-specific settings.
 - Keep command-line parsing separate from business rules and persistence concerns where that separation adds clarity.
 - Prefer existing patterns and small, readable modules over speculative abstractions or generic frameworks.
 

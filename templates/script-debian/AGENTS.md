@@ -34,8 +34,8 @@ Write small, maintainable Debian administration scripts. Prefer native system ut
 - Treat operations affecting filesystems, backups, permissions, packages, services, and remote hosts as potentially destructive. Check preconditions and make failure paths explicit.
 - Use traps and cleanup or restoration logic where partial failure could leave temporary resources or an inconsistent state.
 - Never execute destructive system operations, real backups, or remote changes in an isolated development sandbox. Test with mocks, temporary fixtures, and failure injection instead.
-- Store local configuration under `conf/`; ignore its contents in Git except for `conf/sample/`.
-- Keep sanitized, version-controlled configuration examples in `conf/sample/`, with no secrets or private environment-specific values. Ensure `.gitignore` rules explicitly allow tracking that directory and its files.
+- When needed, store local configuration under `conf/` and exclude it from Git.
+- When needed, keep sanitized, version-controlled configuration examples in the sibling `conf.sample/` directory, with no secrets or private environment-specific values.
 - Never invent, expose, or commit credentials or private configuration.
 
 ## Testing and documentation

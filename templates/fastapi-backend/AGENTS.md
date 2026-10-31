@@ -18,7 +18,7 @@ Build maintainable Python APIs for personal applications with a consistent, ligh
 - Keep development, maintenance, and administration utility scripts in `scripts/`.
 - Keep deployment-specific scripts and configuration in `deploy/` when deployment tooling is needed; do not mix deployment procedures with general-purpose utility scripts.
 - Use `data/` for persistent application files (including SQLite databases); exclude runtime data from version control and never treat it as disposable build output.
-- Use `conf/` for local application configuration; exclude it from version control except for safe tracked examples or defaults under `conf/sample/`. Never commit secrets or private environment-specific settings.
+- When needed, use `conf/` for local application configuration and exclude it from version control. Keep sanitized, tracked examples or defaults in the sibling `conf.sample/` directory only when needed. Never commit secrets or private environment-specific settings.
 - Organize `app/` into `api/`, `core/`, and `services/` when useful. Do not create empty layers or unnecessary modules.
 - Keep HTTP request/response handling separate from business rules and persistence concerns where that separation adds clarity.
 - Prefer existing patterns and small, readable modules over speculative abstractions or generic frameworks.
