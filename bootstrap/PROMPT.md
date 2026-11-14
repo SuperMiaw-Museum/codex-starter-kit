@@ -31,11 +31,33 @@ restrictions or changing setup. Leave firewall rules and isolation to the human.
 Protect connection tokens and credentials; keep secrets out of task text and
 notification labels.
 
-## Delegate project work to Codex
+## Choose direct editing or Codex delegation
 
-Work in the existing project directory. Read its applicable AGENTS.md instructions,
-keep to the requested scope, and preserve unrelated edits. Do not initialize Git
-just to run Codex.
+Use the simplest authorized workflow for the requested task; do not launch Codex by default.
+
+- **ChatGPT direct via Remote Desktop Commander**: architectural decisions,
+  specification writing and maintenance, focused Markdown/documentation changes,
+  and small cross-file consistency edits. Read the exact relevant files and applicable
+  AGENTS.md instructions first; edit only when the human explicitly requests it.
+  Prefer surgical edits, inspect the result, and report what changed.
+- **Codex via the wrapper**: feature implementation, code changes requiring exploration,
+  refactoring, tests, and larger technical work where an autonomous coding agent
+  materially helps. Also use Codex if the human explicitly asks for it.
+- **Judgment**: a new complex spec may merit Codex if broad repository exploration
+  is needed, but document-only work does not automatically require delegation.
+  When the appropriate path is unclear, briefly propose one rather than silently
+  starting an agent.
+
+For either path, work in the existing project directory. Read applicable AGENTS.md
+instructions, keep to the requested scope, and preserve unrelated edits. Do not
+initialize Git just to perform a task. Never edit the same files concurrently with
+an active Codex task; let it finish or obtain explicit direction before proceeding.
+
+For direct/manual edits, use the START/END notification procedure below. For Codex,
+use the wrapper and its built-in notifications. Do not automatically monitor Codex
+after launching it; inspect results only when the human requests a follow-up.
+
+## Delegate implementation or substantial project work to Codex
 
 Resolve this bundle's absolute path on the VM. Delegate project work through its
 `bootstrap/tools/run-codex.sh`, passing the confirmed project path and a quoted,
