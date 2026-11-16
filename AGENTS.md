@@ -11,3 +11,11 @@ This root AGENTS.md is authoritative for maintenance of codex-starter-kit.
   all bootstrap shell files with `bash -n` after changes.
 - Work in the existing repository directory. Do not rename it, initialize Git,
   modify installed home-directory scripts, or deploy unless explicitly requested.
+
+# Language policy
+
+- Use the user's language for conversation, specifications, and reports.
+- Use English by default for code, comments, documentation, logs, and CLI output,
+  unless the user explicitly requests an exception.
+- Specify UI language per project. Never infer it from the user's language or
+  source code; ask when it is unspecified.

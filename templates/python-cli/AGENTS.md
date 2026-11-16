@@ -4,6 +4,12 @@
 
 Build maintainable Python command-line tools with a consistent, lightweight stack. Prefer straightforward implementations, predictable execution, and minimal operational overhead.
 
+## Language policy
+
+- Use the user's language for conversation, specifications, and reports.
+- Use English by default for code, comments, documentation, logs, and CLI output, unless the user explicitly requests an exception.
+- Specify UI language per project. Never infer it from the user's language or source code; ask when it is unspecified.
+
 ## Required stack
 
 - Use uv for Python version, environment, dependency, and lockfile management, and run tools and checks through `uv run`. Commit the project's `uv.lock` for reproducible dependencies.

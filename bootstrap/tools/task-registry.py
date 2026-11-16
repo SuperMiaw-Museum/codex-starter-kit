@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""Per-user task registry. All mutations and delivery share one advisory lock."""
+import fcntl
+import json
+import math
+import os
+from pathlib import Path
+import re
+import secrets
+import stat
+import sys
+import tempfile
+import time
+
+# A fixed per-user path shares counts across checkouts and remote sessions.
+ROOT = Path('/tmp') / f'codex-starter-kit-tasks-{os.getuid()}'
+TTL = 24 * 60 * 60
+
+
+def clean(value, limit):
+    return ''.join(c if c.isprintable() else ' ' for c in value)[:limit]
+
+
+def identity(pid):
+    try:
+        data = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
+        if data[0] == 'Z':
+            return None
+        return [Path('/proc/sys/kernel/random/boot_id').read_text().strip(), data[19]]
+    except (OSError, IndexError):
+        return None
+
+
+def stale(task):
+    if task['mode'] == 'Codex':
+        return identity(task['pid']) != task['identity']
+    return time.time() - task['started'] >= TTL
+
+
+def checked_open(path, flags):
+    fd = os.open(path, flags | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    info = os.fstat(fd)
+    if info.st_uid != os.getuid() or not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
+        os.close(fd)
+        raise ValueError('Unsafe registry file')
+    return fd
+
+
+def read_state():
+    try:
+        with os.fdopen(checked_open('tasks.json', os.O_RDONLY)) as stream:
+            state = json.load(stream)
+    except FileNotFoundError:
+        return {}
+    if not isinstance(state, dict):
+        raise ValueError('Invalid registry')
+    for token, task in state.items():
+        if not re.fullmatch('[0-9a-f]{32}', token) or not isinstance(task, dict):
+            raise ValueError('Invalid registry entry')
+        if (task.get('mode') not in ('Manual', 'Codex')
+                or type(task.get('started')) not in (int, float)
+                or not 0 <= task['started'] <= 1e12
+                or not math.isfinite(task['started'])
+                or not all(isinstance(task.get(k), str) for k in ('project', 'label'))):
+            raise ValueError('Invalid registry entry')
+        if task['mode'] == 'Codex' and (type(task.get('pid')) is not int
+                or task['pid'] <= 0 or not isinstance(task.get('identity'), list)
+                or len(task['identity']) != 2
+                or not all(isinstance(item, str) and item for item in task['identity'])):
+            raise ValueError('Invalid process identity')
+        # Never echo control characters from a damaged or hand-edited registry.
+        task['project'] = clean(task['project'], 80)
+        task['label'] = clean(task['label'], 120)
+    return state
+
+
+def save(state):
+    fd, name = tempfile.mkstemp(prefix='.tasks-', dir='.')
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            json.dump(state, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(name, 'tasks.json')
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def deliver(message, phase, code, stream):
+    # Broken stdout or an inaccessible terminal must not roll back a committed END.
+    try:
+        print(message, file=stream, flush=True)
+    except OSError:
+        pass
+    color = '36' if phase == 'START' else '32' if code == 0 else '31'
+    bell = '\a' if phase == 'END' else ''
+    payload = f'\r\n{bell}\x1b[1;{color}m{message}\x1b[0m\r\n'.encode()
+    try:
+        entries = os.listdir('/dev/pts')
+    except OSError:
+        return
+    for entry in entries:
+        if not re.fullmatch(r'\d+', entry):
+            continue
+        fd = None
+        try:
+            path = '/dev/pts/' + entry
+            info = os.stat(path, follow_symlinks=False)
+            if info.st_uid != os.getuid() or not stat.S_ISCHR(info.st_mode):
+                continue
+            fd = os.open(path, os.O_WRONLY | os.O_NONBLOCK | os.O_NOCTTY | os.O_NOFOLLOW)
+            opened = os.fstat(fd)
+            if (opened.st_uid == os.getuid() and stat.S_ISCHR(opened.st_mode)
+                    and opened.st_rdev == info.st_rdev):
+                os.write(fd, payload)
+        except OSError:
+            pass
+        finally:
+            if fd is not None:
+                os.close(fd)
+
+
+def main(args):
+    if not args:
+        raise ValueError('Usage: start PROJECT LABEL [CODEX_PID] | end TOKEN EXIT_CODE | status')
+    command = args[0]
+    if command == 'start' and len(args) in (3, 4):
+        task = dict(started=time.time(), project=clean(args[1], 80),
+                    label=clean(args[2], 120), mode='Manual')
+        if len(args) == 4:
+            pid = int(args[3])
+            stamp = identity(pid)
+            if stamp is None:
+                raise ValueError('Cannot identify Codex runner')
+            task.update(mode='Codex', pid=pid, identity=stamp)
+    elif command == 'end' and len(args) == 3:
+        if not re.fullmatch('[0-9a-f]{32}', args[1]) or not re.fullmatch('[0-9]{1,3}', args[2]):
+            raise ValueError('Invalid token or exit code')
+        code = int(args[2])
+        if code > 255:
+            raise ValueError('Exit code must be 0..255')
+    elif args != ['status']:
+        raise ValueError('Usage: start PROJECT LABEL [CODEX_PID] | end TOKEN EXIT_CODE | status')
+
+    if command == 'status' and not ROOT.exists() and not ROOT.is_symlink():
+        print('🤖 0 active tasks')
+        return 0
+    if command != 'status':
+        ROOT.mkdir(mode=0o700, exist_ok=True)
+    # Pin the directory with O_NOFOLLOW; relative operations cannot be redirected.
+    directory = os.open(ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(directory)
+        if info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise ValueError('Unsafe registry directory')
+        os.fchdir(directory)
+        lock = checked_open('lock', os.O_RDONLY if command == 'status' else os.O_RDWR | os.O_CREAT)
+        try:
+            fcntl.flock(lock, fcntl.LOCK_SH if command == 'status' else fcntl.LOCK_EX)
+            state = read_state()
+            if command == 'status':
+                active = {key: value for key, value in state.items() if not stale(value)}
+                print(f'🤖 {len(active)} active tasks ({len(state) - len(active)} stale)')
+                for key, value in active.items():
+                    print(f"{key} {value['mode']} [{value['project']}] — {value['label']}")
+                return 0
+            if command == 'end' and args[1] not in state:
+                print('Unknown or expired token', file=sys.stderr)
+                return 3
+            # Preserve the END target long enough to finish it, even if stale.
+            state = {key: value for key, value in state.items()
+                     if (command == 'end' and key == args[1]) or not stale(value)}
+            if command == 'start':
+                token = secrets.token_hex(16)
+                while token in state:
+                    token = secrets.token_hex(16)
+                state[token] = task
+                marker = '🚀 START'
+                suffix = f" — {task['label']}"
+            else:
+                task = state.pop(args[1])
+                marker = '✅ END' if code == 0 else '❌ ERROR'
+                suffix = f" ({max(0, int(time.time() - task['started']))}s)"
+            save(state)
+            message = (f"[{time.strftime('%H:%M:%S')}] 🤖 {len(state)} {marker} "
+                       f"{task['mode']} [{task['project']}]" + suffix)
+            deliver(message, command.upper(), 0 if command == 'start' else code,
+                    sys.stderr if command == 'start' else sys.stdout)
+            if command == 'start':
+                print(token, flush=True)
+        finally:
+            os.close(lock)
+    finally:
+        os.close(directory)
+    return 0
+
+
+if __name__ == '__main__':
+    os.umask(0o077)
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print(f'Task registry: {error}', file=sys.stderr)
+        sys.exit(2)

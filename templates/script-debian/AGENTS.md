@@ -4,6 +4,12 @@
 
 Write small, maintainable Debian administration scripts. Prefer native system utilities, straightforward control flow, and minimal dependencies over generic scripting frameworks.
 
+## Language policy
+
+- Use the user's language for conversation, specifications, and reports.
+- Use English by default for code, comments, documentation, logs, and CLI output, unless the user explicitly requests an exception.
+- Specify UI language per project. Never infer it from the user's language or source code; ask when it is unspecified.
+
 ## Runtime and conventions
 
 - Use Bash as the standard interpreter, with `#!/usr/bin/env bash`. Do not restrict new scripts to POSIX `sh` without a project-specific reason.
@@ -41,7 +47,7 @@ Write small, maintainable Debian administration scripts. Prefer native system ut
 ## Testing and documentation
 
 - Run `shfmt -ln bash -i 4 -d`, `shellcheck -s bash`, and `bash -n` on modified Bash scripts.
-- Install missing development tools when permitted; otherwise report missing tools and checks not run.
+- Report missing development tools and checks not run. Do not install dependencies without explicit human approval.
 - Add focused tests for meaningful behavior and regressions when practical, especially for failure handling and destructive operations.
-- Keep tests in `tests/` and concise behavioral specifications and operational notes in `specs/`. Use these directories as standard project structure; do not create placeholder files or unnecessary documentation.
+- Keep tests in `tests/` and concise behavioral specifications and operational notes in `specs/` when useful. Do not create placeholder files or unnecessary documentation.
 - Preserve existing behavior unless the task explicitly changes it. Make minimal, localized edits and report changes, checks, and limitations.

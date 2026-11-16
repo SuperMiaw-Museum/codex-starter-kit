@@ -4,6 +4,12 @@
 
 Gradually make this hand-written legacy project easier for humans and coding agents to maintain, through small, task-driven changes. Preserve its established architecture and behavior. Do not modernize it by default.
 
+## Language policy
+
+- Use the user's language for conversation, specifications, and reports.
+- Use English by default for code, comments, documentation, logs, and CLI output, unless the user explicitly requests an exception.
+- Specify UI language per project. Never infer it from the user's language or source code; ask when it is unspecified.
+
 ## Scope and implementation
 
 - Make the smallest change that fully addresses the requested task.

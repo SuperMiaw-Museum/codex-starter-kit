@@ -4,6 +4,12 @@
 
 Build maintainable Python APIs for personal applications with a consistent, lightweight stack. Prefer straightforward implementations, predictable deployments, and minimal operational overhead. Do not assume every project is single-user.
 
+## Language policy
+
+- Use the user's language for conversation, specifications, and reports.
+- Use English by default for code, comments, documentation, logs, and CLI output, unless the user explicitly requests an exception.
+- Specify UI language per project. Never infer it from the user's language or source code; ask when it is unspecified.
+
 ## Required stack
 
 - Use Python and FastAPI. A database is optional; add one only when the application needs it.
@@ -14,7 +20,7 @@ Build maintainable Python APIs for personal applications with a consistent, ligh
 
 ## Project organization
 
-- Keep application code in `app/`, tests in `tests/`, functional specifications in `specs/`, runtime data in `data/`, and application configuration in `conf/`.
+- Keep application code in `app/`, tests in `tests/`, functional specifications in `specs/` when useful, runtime data in `data/`, and application configuration in `conf/`.
 - Keep development, maintenance, and administration utility scripts in `scripts/`.
 - Keep deployment-specific scripts and configuration in `deploy/` when deployment tooling is needed; do not mix deployment procedures with general-purpose utility scripts.
 - Use `data/` for persistent application files (including SQLite databases); exclude runtime data from version control and never treat it as disposable build output.
