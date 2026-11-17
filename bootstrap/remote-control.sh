@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# codex-starter-kit version: 2.1.0
+# codex-starter-kit version: 2.2.0
 # SSH session banner: never starts the bridge or changes shell configuration.
 set -eo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
