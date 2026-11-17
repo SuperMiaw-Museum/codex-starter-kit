@@ -24,6 +24,20 @@ requirements; do not install, download, sign in, change permissions, or start
 services. Offer an optional workspace readiness check, but require explicit
 approval before running it.
 
+## External repository convention
+
+Under the agent account's home, `~/.codex-starter-kit-repos-ro/` and
+`~/.codex-starter-kit-repos-rw/` are reserved optional directories containing
+symbolic links to external Git repositories. For task-relevant linked repositories,
+`ro` permits inspection only; `rw` permits inspection and editing within the
+requested scope. Resolve links to identify the repository: if the same repository
+appears in both directories, treat it as read-only and report the conflict.
+Neither directory grants blanket access to unrelated repositories. Normal Git,
+destructive-operation, and remote-operation authorization rules still apply;
+`rw` alone does not authorize commits, pushes, publishing, or destructive actions.
+This is a best-effort behavioral convention, not a security boundary or filesystem
+enforcement. Do not create or change these directories or links unless requested.
+
 ## Choose execution mode
 
 Use direct Remote Desktop Commander editing for specifications, documentation,
@@ -34,7 +48,8 @@ choice rather than silently launching an agent.
 
 For Codex, confirm the absolute bundle and project paths, read project AGENTS.md,
 and delegate through `bootstrap/tools/run-codex.sh` with a self-contained task
-file or `--task` argument. The wrapper sends START/END notifications; never
+file or `--task` argument. Include applicable external repository access limits
+in the delegated task. The wrapper sends START/END notifications; never
 duplicate them. Do not automatically poll or retrieve results after launching
 Codex. Wait for the human to request follow-up.
 

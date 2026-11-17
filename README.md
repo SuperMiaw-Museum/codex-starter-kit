@@ -67,6 +67,18 @@ For direct use of the runner and task status, see
 are available in [templates](templates/). You can also use
 [codex-sync](https://github.com/SuperMiaw/codex-sync) to sync projects.
 
+## External repositories
+
+The optional reserved `~/.codex-starter-kit-repos-ro/` and
+`~/.codex-starter-kit-repos-rw/` directories under the agent account's home contain
+symlinks to task-relevant Git repositories: inspection only for `ro`, inspection
+and scoped editing for `rw`. A repository linked in both is read-only; report the
+conflict. Unrelated repositories remain outside this convention. Normal Git,
+destructive and remote operation rules still apply. These are best-effort agent
+instructions, not filesystem enforcement or a security boundary. Setup creates
+neither directory nor links. See the [operational prompt](bootstrap/PROMPT.md)
+and copy or adapt the convention with your project template.
+
 ## Technical specifications
 
 [Architecture](specs/architecture.md) ·
@@ -77,4 +89,9 @@ are available in [templates](templates/). You can also use
 [Releases](specs/releases.md)
 
 Release tags use plain `a.b.c` versions (no `v`). Run
-`./release.sh --check` before releasing.
+`./release.sh --check` before releasing, then `./release.sh` to choose a
+major/minor/patch bump, or `./release.sh --bump patch`. After confirmation, it
+commits version files and atomically pushes main and the annotated tag to origin.
+
+Tag CI prepares a GitHub Release draft; it never publishes automatically.
+See [releases](specs/releases.md) for explicit manual publication.

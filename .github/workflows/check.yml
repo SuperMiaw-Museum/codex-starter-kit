@@ -23,20 +23,25 @@ jobs:
       - run: find bootstrap -type f -name '*.sh' -exec bash -n {} \;
       - run: python3 -m unittest discover -s tests -v
 
-  publish:
+  draft-release:
     needs: check
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-latest
+    concurrency:
+      group: release-${{ github.repository }}-${{ github.ref_name }}
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
-      - name: Publish GitHub release
+      - name: Prepare GitHub release draft
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
         run: |
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --generate-notes --verify-tag
+          releases=$(gh api --paginate "repos/$GH_REPO/releases" --jq '.[].tag_name')
+          if grep -Fxq -- "$GITHUB_REF_NAME" <<< "$releases"; then
+            echo "GitHub Release already exists for $GITHUB_REF_NAME; unchanged."
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" --generate-notes
           fi
