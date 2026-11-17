@@ -62,6 +62,38 @@ or hand off substantial work to Codex. The runner automatically sends START,
 END and ERROR notifications to your SSH terminals with a shared active-task
 count. Notifications are best effort; verify actual task results.
 
+By default, START notifications show a one-line preview of up to 120 task
+characters, followed by `...` only when truncated. Set
+`CODEX_STARTER_KIT_SHOW_FULL_PROMPT=1` to show the complete, unmodified prompt
+below the START header instead.
+
+Codex END and ERROR notifications include the duration and, when available,
+the model, total tokens and session ID. Set
+`CODEX_STARTER_KIT_NOTIFY_METADATA=0` to disable metadata capture.
+
+To configure these options for the Desktop Commander service, run:
+
+```bash
+systemctl --user edit desktop-commander.service
+```
+
+Add the desired settings to the override (omit either line to keep its default):
+
+```ini
+[Service]
+Environment=CODEX_STARTER_KIT_SHOW_FULL_PROMPT=1
+Environment=CODEX_STARTER_KIT_NOTIFY_METADATA=0
+```
+
+Apply the changes with:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user restart desktop-commander.service
+```
+
+Restarting the service temporarily disconnects Remote Desktop Commander.
+
 For direct use of the runner and task status, see
 [notifications](specs/notifications.md). Optional project-specific instructions
 are available in [templates](templates/). You can also use

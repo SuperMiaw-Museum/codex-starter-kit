@@ -24,10 +24,10 @@ transition in order. Counts include both manual and Codex tasks and always show
 zero, with the count immediately before the status emoji:
 
 ```text
-[12:00:00] 🤖 3 🚀 START Codex [project] — label
-[12:00:42] 🤖 2 ✅ END Codex [project] (42s)
-[12:00:44] 🤖 1 ❌ ERROR Codex [project] (18s)
-[12:01:35] 🤖 0 ✅ END Codex [project] (95s)
+[12:00:00] 🤖 3 🚀 START Codex [project] task preview
+[12:00:42] 🤖 2 ✅ END Codex [project] duration: 42s | model: gpt-5.4 | tokens: 1,025
+[12:00:44] 🤖 1 ❌ ERROR Codex [project] duration: 18s
+[12:01:35] 🤖 0 ✅ END Codex [project] duration: 95s
 ```
 
 Manual notices use `Manual`. START writes its notice to stderr and only the token
@@ -48,6 +48,22 @@ finish a stale entry before pruning. Keep manual work within 24 hours and do not
 remove registry files while tasks run. Crashes after an atomic state commit may
 lose a notification, and SIGKILL cannot run the runner's END trap. Terminal
 delivery is best effort; use task output and exit status to assess success.
+
+By default, Codex START shows a single-line task preview of up to 120
+characters. A truncated preview adds `...` after those characters.
+Set `CODEX_STARTER_KIT_SHOW_FULL_PROMPT=1` in the runner's environment to show
+only the START header on the first line and the full task prompt below it in
+the SSH terminal. The prompt keeps its line breaks and backslashes and is
+written as plain text. The registry stores only the bounded label.
+
+Codex END and ERROR notices show the duration followed by any available
+`model:`, `tokens:` and `session:` fields, with ` | ` between fields. By default
+the runner uses `codex exec --json` when supported and streams completed agent messages and
+errors. Set `CODEX_STARTER_KIT_NOTIFY_METADATA=0` to disable capture and use the
+usual Codex tool and progress display. The token count
+adds input and output from the completed turn, with cached input already
+included. The model comes from the matching local session record. Failed or
+interrupted runs can have partial metadata. Unavailable fields are omitted.
 
 Run the offline checks with `python3 -m unittest discover -s tests -v`. They use
 private temporary registries and fake Codex commands, exercise concurrent mixed

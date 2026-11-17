@@ -15,6 +15,7 @@ import time
 # A fixed per-user path shares counts across checkouts and remote sessions.
 ROOT = Path('/tmp') / f'codex-starter-kit-tasks-{os.getuid()}'
 TTL = 24 * 60 * 60
+LABEL_LIMIT = 120
 
 
 def clean(value, limit):
@@ -70,7 +71,7 @@ def read_state():
             raise ValueError('Invalid process identity')
         # Never echo control characters from a damaged or hand-edited registry.
         task['project'] = clean(task['project'], 80)
-        task['label'] = clean(task['label'], 120)
+        task['label'] = clean(task['label'], LABEL_LIMIT)
     return state
 
 
@@ -87,7 +88,7 @@ def save(state):
             os.unlink(name)
 
 
-def deliver(message, phase, code, stream):
+def deliver(message, phase, code, stream, full_prompt=None):
     # Broken stdout or an inaccessible terminal must not roll back a committed END.
     try:
         print(message, file=stream, flush=True)
@@ -96,6 +97,10 @@ def deliver(message, phase, code, stream):
     color = '36' if phase == 'START' else '32' if code == 0 else '31'
     bell = '\a' if phase == 'END' else ''
     payload = f'\r\n{bell}\x1b[1;{color}m{message}\x1b[0m\r\n'.encode()
+    if full_prompt is not None:
+        payload += full_prompt.encode(errors='surrogateescape')
+        if not payload.endswith(b'\n'):
+            payload += b'\r\n'
     try:
         entries = os.listdir('/dev/pts')
     except OSError:
@@ -122,27 +127,38 @@ def deliver(message, phase, code, stream):
 
 
 def main(args):
+    usage = 'Usage: start PROJECT LABEL [CODEX_PID] | end TOKEN EXIT_CODE [METADATA_FILE] | status'
     if not args:
-        raise ValueError('Usage: start PROJECT LABEL [CODEX_PID] | end TOKEN EXIT_CODE | status')
+        raise ValueError(usage)
+    metadata = None
+    full_prompt = None
     command = args[0]
     if command == 'start' and len(args) in (3, 4):
         task = dict(started=time.time(), project=clean(args[1], 80),
-                    label=clean(args[2], 120), mode='Manual')
+                    label=clean(args[2], LABEL_LIMIT), mode='Manual')
         if len(args) == 4:
             pid = int(args[3])
             stamp = identity(pid)
             if stamp is None:
                 raise ValueError('Cannot identify Codex runner')
             task.update(mode='Codex', pid=pid, identity=stamp)
-    elif command == 'end' and len(args) == 3:
+            if os.environ.get('CODEX_STARTER_KIT_SHOW_FULL_PROMPT') == '1':
+                full_prompt = args[2]
+    elif command == 'end' and len(args) in (3, 4):
         if not re.fullmatch('[0-9a-f]{32}', args[1]) or not re.fullmatch('[0-9]{1,3}', args[2]):
             raise ValueError('Invalid token or exit code')
         code = int(args[2])
         if code > 255:
             raise ValueError('Exit code must be 0..255')
+        if len(args) == 4:
+            metadata = args[3]
     elif args != ['status']:
-        raise ValueError('Usage: start PROJECT LABEL [CODEX_PID] | end TOKEN EXIT_CODE | status')
+        raise ValueError(usage)
 
+    fields = []
+    if metadata:
+        from codex_notice import notice_fields
+        fields = notice_fields(metadata)
     if command == 'status' and not ROOT.exists() and not ROOT.is_symlink():
         print('🤖 0 active tasks')
         return 0
@@ -177,16 +193,27 @@ def main(args):
                     token = secrets.token_hex(16)
                 state[token] = task
                 marker = '🚀 START'
-                suffix = f" — {task['label']}"
+                if task['mode'] == 'Manual':
+                    suffix = f" — {task['label']}"
+                elif full_prompt is not None:
+                    suffix = ''
+                else:
+                    suffix = f" {task['label']}"
+                    if len(args[2]) > LABEL_LIMIT:
+                        suffix += '...'
             else:
                 task = state.pop(args[1])
                 marker = '✅ END' if code == 0 else '❌ ERROR'
-                suffix = f" ({max(0, int(time.time() - task['started']))}s)"
+                duration = max(0, int(time.time() - task['started']))
+                if task['mode'] == 'Codex':
+                    suffix = ' ' + ' | '.join([f'duration: {duration}s', *fields])
+                else:
+                    suffix = f' ({duration}s)'
             save(state)
             message = (f"[{time.strftime('%H:%M:%S')}] 🤖 {len(state)} {marker} "
                        f"{task['mode']} [{task['project']}]" + suffix)
             deliver(message, command.upper(), 0 if command == 'start' else code,
-                    sys.stderr if command == 'start' else sys.stdout)
+                    sys.stderr if command == 'start' else sys.stdout, full_prompt)
             if command == 'start':
                 print(token, flush=True)
         finally:

@@ -1,14 +1,17 @@
-"""Offline task tests with private registry, fake Codex, and no terminal broadcast."""
+"""Offline task tests with a private registry, fake Codex, and isolated terminals."""
 import concurrent.futures
 import importlib.util
 import io
+import itertools
 import json
 import os
 from pathlib import Path
 import pty
+import re
 import shutil
 import subprocess
 import tempfile
+import tty
 import unittest
 from unittest.mock import patch
 
@@ -30,6 +33,8 @@ class TaskTests(unittest.TestCase):
         code = code.replace("entries = os.listdir('/dev/pts')", 'entries = []')
         path.write_text(code)
         self.env = dict(os.environ, HOME=str(self.root), NVM_DIR=str(self.root / 'nvm'))
+        self.env.pop('CODEX_STARTER_KIT_SHOW_FULL_PROMPT', None)
+        self.env.pop('CODEX_STARTER_KIT_NOTIFY_METADATA', None)
 
     def run_task(self, *args):
         return subprocess.run([str(self.bundle / 'tools/manual-task.sh'), *args],
@@ -192,6 +197,76 @@ class TaskTests(unittest.TestCase):
         self.assertIn('ARGS:exec --skip-git-repo-check -', result.stdout)
         self.assertEqual(len(self.state()), 1)
 
+    def test_runner_optional_full_prompt(self):
+        master, slave = pty.openpty()
+        self.addCleanup(os.close, master)
+        self.addCleanup(os.close, slave)
+        tty.setraw(slave)
+        os.set_blocking(master, False)
+        entry = Path(os.ttyname(slave)).name
+        registry_script = self.bundle / 'tools/task-registry.py'
+        registry_script.write_text(registry_script.read_text().replace('entries = []', f'entries = [{entry!r}]'))
+        bin_dir = self.root / 'bin'
+        bin_dir.mkdir()
+        codex = bin_dir / 'codex'
+        codex.write_text('#!/bin/bash\ncp "$REGISTRY/tasks.json" "$HOME/active.json"\nprintf "Codex started\\n"\ncat\nexit 7\n')
+        codex.chmod(0o755)
+        self.env['PATH'] = str(bin_dir) + ':' + self.env['PATH']
+        self.env['REGISTRY'] = str(self.registry)
+        task = '- first line with literal \\n and %s\n\n  second line ' + 'x' * 300 + '\\'
+        task_file = self.root / 'task.txt'
+        task_file.write_text(task + '\n\n')
+        for setting, task_args in ((None, ['--task', task]), ('0', [str(task_file)]),
+                                   ('1', ['--task', task]), ('1', [str(task_file)])):
+            with self.subTest(setting=setting, from_file=len(task_args) == 1):
+                env = self.env.copy()
+                if setting is not None:
+                    env['CODEX_STARTER_KIT_SHOW_FULL_PROMPT'] = setting
+                result = subprocess.run(
+                    [str(self.bundle / 'tools/run-codex.sh'), str(self.root), *task_args],
+                    env=env, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 7, result.stderr)
+                preview = '' if setting == '1' else ' ' + task.replace('\n', ' ')[:120] + '...'
+                self.assertRegex(
+                    result.stderr,
+                    rf'^\[\d{{2}}:\d{{2}}:\d{{2}}\] 🤖 1 🚀 START Codex '
+                    rf'\[{re.escape(self.root.name)}\]{re.escape(preview)}\n\Z')
+                display, marker, output = result.stdout.partition('Codex started\n')
+                self.assertEqual(display, '')
+                self.assertEqual(marker, 'Codex started\n')
+                self.assertTrue(output.startswith(task + '\n'))
+                self.assertRegex(output[len(task) + 1:],
+                                 r'^\[\d{2}:\d{2}:\d{2}\] 🤖 0 ❌ ERROR Codex '
+                                 r'\[[^\n]+\] duration: \d+s\nSANDBOX_HANDOFF_EXIT_CODE=7\n\Z')
+                start = f'\r\n\x1b[1;36m{result.stderr.rstrip(chr(10))}\x1b[0m\r\n'.encode()
+                if setting == '1':
+                    start += task.encode() + (b'\n\n' if len(task_args) == 1 else b'\r\n')
+                end = output[len(task) + 1:].splitlines()[0]
+                self.assertEqual(os.read(master, 4096), start + f'\r\n\a\x1b[1;31m{end}\x1b[0m\r\n'.encode())
+                active = json.loads((self.root / 'active.json').read_text())
+                registered_task, = active.values()
+                self.assertEqual(set(registered_task), {'started', 'project', 'label', 'mode', 'pid', 'identity'})
+                self.assertEqual(registered_task['label'], task.replace('\n', ' ')[:120])
+                self.assertEqual(self.state(), {})
+
+    def test_runner_start_preview_length(self):
+        codex = self.root / 'codex'
+        codex.write_text('#!/bin/bash\ncat >/dev/null\n')
+        codex.chmod(0o755)
+        self.env['PATH'] = f'{self.root}:{self.env["PATH"]}'
+        for task, preview in (('short\ntext', 'short text'),
+                              ('x' * 120, 'x' * 120),
+                              ('x' * 121, 'x' * 120 + '...')):
+            with self.subTest(length=len(task)):
+                result = subprocess.run(
+                    [str(self.bundle / 'tools/run-codex.sh'), str(self.root), '--task', task],
+                    env=self.env, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertRegex(
+                    result.stderr,
+                    rf'^\[\d{{2}}:\d{{2}}:\d{{2}}\] 🤖 1 🚀 START Codex '
+                    rf'\[{re.escape(self.root.name)}\] {re.escape(preview)}\n\Z')
+
     def test_runner_signal_and_notification_failure(self):
         bin_dir = self.root / 'bin'
         bin_dir.mkdir()
@@ -216,6 +291,91 @@ class TaskTests(unittest.TestCase):
         self.assertIn('still runs', result.stdout)
         self.assertIn('SANDBOX_HANDOFF_EXIT_CODE=9', result.stdout)
 
+    def test_runner_broadcasts_metadata_by_default(self):
+        master, slave = pty.openpty()
+        self.addCleanup(os.close, master)
+        self.addCleanup(os.close, slave)
+        tty.setraw(slave)
+        os.set_blocking(master, False)
+        entry = Path(os.ttyname(slave)).name
+        registry_script = self.bundle / 'tools/task-registry.py'
+        registry_script.write_text(registry_script.read_text().replace('entries = []', f'entries = [{entry!r}]'))
+        session = '01234567-89ab-4def-8123-0123456789ab'
+        home = self.root / 'codex-home'
+        date = home / 'sessions/2026/11/17'
+        date.mkdir(parents=True)
+        rollout = date / f'rollout-test-{session}.jsonl'
+        rollout.write_text(
+            json.dumps({'type': 'session_meta', 'payload': {'id': session}}) + '\n'
+            + json.dumps({'type': 'turn_context', 'payload': {'model': 'test-model'}}) + '\n')
+        codex = self.root / 'codex'
+        self.env.update(PATH=f'{self.root}:{self.env["PATH"]}', CODEX_HOME=str(home))
+        task = 'first line ' + 'x' * 130 + '\nPRIVATE FULL PROMPT'
+        for setting, code in itertools.product(('0', '1'), (0, 7, 143, 8)):
+            with self.subTest(setting=setting, code=code):
+                events = [
+                    {'type': 'thread.started', 'thread_id': session if code != 8 else task},
+                    {'type': 'item.completed', 'item': {'type': 'command_execution', 'command': task}},
+                    {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': 'Agent output'}},
+                ]
+                if code in (0, 7):
+                    events.append({'type': 'turn.completed', 'usage': {
+                        'input_tokens': 1000, 'cached_input_tokens': 400, 'output_tokens': 25}})
+                elif code == 8:
+                    events.append({'type': 'turn.completed', 'usage': {
+                        'input_tokens': True, 'output_tokens': task}})
+                codex.write_text(
+                    '#!/bin/bash\n'
+                    'if [[ $2 == --help ]]; then echo "  --json"; exit; fi\n'
+                    '[[ $* == *--json* ]] || exit 99\n'
+                    'cat >/dev/null\n'
+                    "cat <<'EVENTS'\nmalformed\n"
+                    + '\n'.join(map(json.dumps, events)) + '\nEVENTS\n'
+                    + ('kill -TERM "$PPID"\n' if code == 143 else f'exit {code}\n'))
+                codex.chmod(0o755)
+                result = subprocess.run(
+                    [str(self.bundle / 'tools/run-codex.sh'), str(self.root), '--task', task],
+                    env=dict(self.env, CODEX_STARTER_KIT_SHOW_FULL_PROMPT=setting),
+                    capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertIn('START Codex', result.stderr)
+                self.assertNotIn('session:', result.stderr)
+                self.assertNotIn('PRIVATE FULL PROMPT', result.stdout + result.stderr)
+                self.assertTrue(result.stdout.startswith('Agent output\n'))
+                start = f'\r\n\x1b[1;36m{result.stderr.rstrip(chr(10))}\x1b[0m\r\n'
+                if setting == '1':
+                    start += task + '\r\n'
+                marker = '❌ ERROR' if code else '✅ END'
+                color = 31 if code else 32
+                suffix = ''
+                if code != 8:
+                    tokens = ' | tokens: 1,025' if code in (0, 7) else ''
+                    suffix = f' | model: test-model{tokens} | session: {session}'
+                notice = (rf'\[\d{{2}}:\d{{2}}:\d{{2}}\] 🤖 0 {marker} Codex '
+                          rf'\[{re.escape(self.root.name)}\] duration: \d+s{re.escape(suffix)}')
+                self.assertRegex(
+                    os.read(master, 4096).decode(),
+                    rf'^{re.escape(start)}\r\n\a\x1b\[1;{color}m{notice}\x1b\[0m\r\n\Z')
+                self.assertRegex(result.stdout,
+                                 rf'^Agent output\n{notice}\nSANDBOX_HANDOFF_EXIT_CODE={code}\n\Z')
+                self.assertEqual(self.state(), {})
+
+    def test_runner_metadata_without_json_support(self):
+        codex = self.root / 'codex'
+        codex.write_text('#!/bin/bash\n'
+                         'if [[ $2 == --help ]]; then echo "Usage: codex exec"; exit; fi\n'
+                         '[[ $* != *--json* ]] || exit 99\n'
+                         'cat\nexit 6\n')
+        codex.chmod(0o755)
+        self.env['PATH'] = f'{self.root}:{self.env["PATH"]}'
+        result = subprocess.run(
+            [str(self.bundle / 'tools/run-codex.sh'), str(self.root), '--task', 'fallback'],
+            env=self.env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 6, result.stderr)
+        self.assertTrue(result.stdout.startswith('fallback\n'))
+        self.assertRegex(result.stdout, r'ERROR Codex .* duration: \d+s\nSANDBOX_HANDOFF_EXIT_CODE=6\n$')
+        self.assertEqual(self.state(), {})
+
     def test_terminal_payload_owner_and_bell(self):
         spec = importlib.util.spec_from_file_location('notify', SOURCE / 'tools/task-registry.py')
         module = importlib.util.module_from_spec(spec)
@@ -223,10 +383,11 @@ class TaskTests(unittest.TestCase):
         master, slave = pty.openpty()
         self.addCleanup(os.close, master)
         self.addCleanup(os.close, slave)
+        tty.setraw(slave)
         entry = Path(os.ttyname(slave)).name
         output = io.StringIO()
         with patch.object(module.os, 'listdir', return_value=[entry]):
-            module.deliver('🤖 0 ✅ END Codex [p] (2s)', 'END', 0, output)
+            module.deliver('🤖 0 ✅ END Codex [p] duration: 2s', 'END', 0, output)
         self.assertNotIn('\x1b', output.getvalue())
         payload = os.read(master, 4096)
         self.assertIn(b'\a', payload)
@@ -243,6 +404,10 @@ class TaskTests(unittest.TestCase):
         payload = os.read(master, 4096)
         self.assertNotIn(b'\a', payload)
         self.assertIn(b'\x1b[1;36m', payload)
+        with patch.object(module.os, 'listdir', return_value=[entry]), patch.object(module.os, 'write') as write:
+            module.deliver('start notice', 'START', 0, output, 'raw\n\\prompt')
+            write.assert_called_once()
+            self.assertEqual(write.call_args.args[1], b'\r\n\x1b[1;36mstart notice\x1b[0m\r\nraw\n\\prompt\r\n')
         # Recheck ownership after open, guarding a path change between stat/open.
         wrong_owner = os.stat_result((os.fstat(slave).st_mode, 0, 0, 1, -1, 0, 0, 0, 0, 0))
         with patch.object(module.os, 'listdir', return_value=[entry]), patch.object(module.os, 'fstat', return_value=wrong_owner), patch.object(module.os, 'write') as write:
