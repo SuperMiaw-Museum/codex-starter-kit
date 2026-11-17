@@ -1,4 +1,5 @@
 """Offline bootstrap tests; never touch the real home or systemd manager."""
+import fcntl
 import os
 from pathlib import Path
 import pty
@@ -26,9 +27,15 @@ class BootstrapTests(unittest.TestCase):
         for name in ('tmux', 'node', 'npx'):
             self.stub(name, 'exit 0')
         self.env = dict(os.environ, HOME=str(self.home),
+                        NVM_DIR=str(self.home / '.nvm'),
+                        BUN_INSTALL=str(self.home / '.bun'),
                         XDG_STATE_HOME=str(self.home / '.local/state'),
                         XDG_CONFIG_HOME=str(self.home / '.config'),
                         PATH=str(self.bin) + ':' + os.environ['PATH'], CALLS=str(self.calls))
+        registry = self.bundle / 'tools/task-registry.py'
+        registry.write_text(registry.read_text().replace(
+            "Path('/tmp') / f'codex-starter-kit-tasks-{os.getuid()}'",
+            f'Path({str(self.root / "task-registry")!r})'))
         # Isolate reminder state; deterministic Linux boot and process fixtures.
         self.state = self.root / 'state'
         script = self.bundle / 'remote-control.sh'
@@ -119,6 +126,51 @@ class BootstrapTests(unittest.TestCase):
         result = self.run_script('tools/desktop-commander.sh', '--inside-tmux')
         self.assertEqual(result.returncode, 23)
         self.assertEqual(self.calls.read_text(), 'wait-for -S desktop-commander-exit\n')
+
+    def test_one_shot_prints_reminder_before_foreground_bridge(self):
+        nvm = self.home / '.nvm'
+        nvm.mkdir()
+        (nvm / 'nvm.sh').write_text('export TEST_NVM_LOADED=yes\n')
+        self.env['NVM_DIR'] = str(nvm)
+        self.stub('systemctl', 'printf "inactive\\n"; exit 3')
+        self.stub('tmux', '[[ $* == "has-session -t =desktop-commander" ]] || touch "$CALLS"; exit 1')
+        self.stub('npx', '[[ $TEST_NVM_LOADED == yes ]] || exit 99\n'
+                         'printf "bridge: %s\\n" "$*" >&2\nexit 23')
+        result = self.run_script('remote-control.sh', '--once')
+        self.assertEqual(result.returncode, 23)
+        self.assertIn(f'Read "{self.bundle}/PROMPT.md"', result.stderr)
+        self.assertLess(result.stderr.index('COPY THIS PROMPT INTO CHATGPT'),
+                        result.stderr.index('bridge: @wonderwhy-er/desktop-commander@latest remote'))
+        self.assertEqual(list(self.home.iterdir()), [nvm])
+        self.assertFalse(self.state.exists())
+        self.assertFalse(self.calls.exists())
+
+    def test_one_shot_rejects_running_bridge(self):
+        self.stub('npx', 'touch "$CALLS"; exit 99')
+        for status in ('active', 'activating', 'deactivating'):
+            with self.subTest(status=status):
+                self.stub('systemctl', f'echo {status}; exit 3')
+                result = self.run_script('remote-control.sh', '--once')
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(f'desktop-commander.service is {status}', result.stderr)
+        self.stub('systemctl', 'exit 1')
+        result = self.run_script('remote-control.sh', '--once')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('tmux session already exists', result.stderr)
+        self.assertFalse(self.calls.exists())
+
+    def test_one_shot_rejects_locked_checkout_without_creating_state(self):
+        self.stub('npx', 'touch "$CALLS"; exit 99')
+        directory = os.open(self.bundle, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            fcntl.flock(directory, fcntl.LOCK_EX)
+            result = self.run_script('remote-control.sh', '--once')
+        finally:
+            os.close(directory)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('one-shot bridge may already be starting or running', result.stderr)
+        self.assertFalse(self.calls.exists())
+        self.assertFalse(self.state.exists())
 
     def test_agent_ancestry(self):
         for executable, argv in (

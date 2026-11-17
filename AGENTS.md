@@ -7,6 +7,9 @@ This root AGENTS.md is authoritative for maintenance of codex-starter-kit.
   destination projects; do not apply their contents to repository maintenance.
 - Keep project templates in flat, named directories under `templates/` and
   `bootstrap/` for the Codex remote workflow. Keep documentation and paths aligned.
+- User-facing documentation (`README.md` and `docs/`) is maintained by ChatGPT,
+  not Codex. Do not modify these files unless ChatGPT explicitly delegates the
+  changes. Keep technical specifications in `specs/`.
 - Preserve simple, portable Bash scripts and their executable permissions. Verify
   all bootstrap shell files with `bash -n` after changes.
 - Work in the existing repository directory. Do not rename it, initialize Git,

@@ -83,10 +83,15 @@
    with `systemctl --user restart desktop-commander.service`. Restart disconnects
    the current connection. Optional activation on user manager startup is
    `systemctl --user enable desktop-commander.service`; VM boot availability
-   depends on your user-manager/login configuration. Alternatively run
-   `bootstrap/tools/desktop-commander.sh` in a terminal. The bridge may download
+   depends on your user-manager/login configuration. The bridge may download
    its package and prints connection information in tmux (`tmux attach -t
    desktop-commander`).
+
+   For a one-shot launch, run `bootstrap/remote-control.sh --once` instead of
+   installing the hook or service. It checks for an existing service or named
+   tmux session, holds a nonblocking lock on the checkout's bootstrap directory,
+   prints the same reminder as `--show`, and replaces the launcher with the
+   foreground `npx` process. See [one-shot startup](../docs/one-shot-startup.md).
 
 4. **Connect ChatGPT.** In the ChatGPT web app, configure the **Remote Desktop
    Commander plugin** using the bridge's connection information and the plugin's

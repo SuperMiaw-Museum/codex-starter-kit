@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # codex-starter-kit version: 2.2.0
-# SSH session banner: never starts the bridge or changes shell configuration.
+# SSH session banner and optional foreground bridge launcher.
 set -eo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 show_reminder() {
@@ -16,8 +16,11 @@ show_reminder() {
 }
 case ${1:---show} in
   --show) show_reminder; exit ;;
+  --once)
+    [[ $# -eq 1 ]] || { printf 'Usage: %s --once\n' "$0" >&2; exit 2; }
+    exec "$script_dir/tools/desktop-commander.sh" --foreground ;;
   --auto) ;;
-  *) printf 'Usage: %s [--show|--auto]\n' "$0" >&2; exit 2 ;;
+  *) printf 'Usage: %s [--show|--auto|--once]\n' "$0" >&2; exit 2 ;;
 esac
 # The .bashrc hook calls this only from interactive Bash. Require a terminal too.
 [[ -t 0 && -t 2 ]] || exit 0
