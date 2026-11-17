@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# codex-starter-kit version: 2.2.0
+# codex-starter-kit version: 2.3.0
 # Explicit, user-invoked setup only. With no options, preview the managed unit.
 set -euo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)

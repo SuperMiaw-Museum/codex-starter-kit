@@ -1,5 +1,5 @@
 # codex-starter-kit
-<!-- codex-starter-kit version: 2.2.0 -->
+<!-- codex-starter-kit version: 2.3.0 -->
 
 A lightweight workflow for agentic coding in an isolated Linux VM.
 
