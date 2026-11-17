@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# codex-starter-kit version: 2.0.0
+# codex-starter-kit version: 2.1.0
 set -Eeuo pipefail
 
 usage() {

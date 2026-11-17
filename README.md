@@ -1,5 +1,5 @@
 # codex-starter-kit
-<!-- codex-starter-kit version: 2.0.0 -->
+<!-- codex-starter-kit version: 2.1.0 -->
 
 A starting point for working with ChatGPT and Codex CLI on projects inside an
 isolated Linux VM. ChatGPT orchestrates work via Remote Desktop Commander;
