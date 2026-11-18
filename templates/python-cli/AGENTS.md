@@ -20,7 +20,7 @@ Build maintainable Python command-line tools with a consistent, lightweight stac
 
 ## Project organization
 
-- Keep application source in `app/` and focused tests in `tests/`. Add `specs/` for significant features and `scripts/` for development, maintenance, or administration utilities only when useful; do not create empty directories or unnecessary layers.
+- Keep application source in `app/` and focused tests in `tests/`. Add `scripts/` for development, maintenance, or administration utilities only when useful; do not create empty directories or unnecessary layers.
 - Use `data/` for persistent user data, including SQLite databases when used; exclude it from version control and never treat it as disposable build output.
 - When needed, use `conf/` for local application configuration and exclude it from version control. Keep sanitized, tracked examples or defaults in the sibling `conf.sample/` directory only when needed. Never commit secrets or private environment-specific settings.
 - Keep command-line parsing separate from business rules and persistence concerns where that separation adds clarity.
@@ -55,7 +55,13 @@ The following requirements apply only when the tool uses a database.
 
 - Maintain concise Markdown specifications in `specs/` when useful for significant features, command contracts, and business rules.
 - Update relevant specifications when behavior changes; document observable behavior and constraints rather than narrating implementation details.
-- Keep `README.md` focused on setup, installation, usage, development, and configuration, not agent session history.
+- Keep `README.md` concise as the project entry point, focused on setup, installation, usage, development, and configuration. Put user-facing details in `docs/` when they warrant a separate page.
+- Do not modify `README.md` or files under `docs/` unless explicitly requested,
+  except `docs/SCRATCHPAD.md`, which may be created, edited, cleared, or deleted
+  as needed to note potential documentation additions, corrections, or removals.
+- Keep scratchpad notes short and contextual, with no assigned owner or review
+  schedule. Review them separately when requested, then clear or delete them;
+  the scratchpad is not a permanent journal or backlog.
 - Record project-specific invariants in the project's own `AGENTS.md`.
 
 ## Workflow

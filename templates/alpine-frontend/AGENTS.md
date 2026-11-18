@@ -23,7 +23,7 @@ Build maintainable, lightweight frontend applications using the established pers
 
 ## Project organization
 
-- Keep application source under `src/` and tests under `tests/`. Use `specs/` for significant functional specifications when useful; do not create placeholder documentation.
+- Keep application source under `src/` and tests under `tests/`.
 - Separate application logic from Eleventy templates and static assets, using a simple structure appropriate to the project.
 - The build MUST output all deployable static files (HTML, CSS, JavaScript, assets) into a single `dist/` directory. Deployment must not require files from the source tree or other build directories.
 - Prefer the smallest architecture that meets current requirements. Do not create layers, abstractions, or configuration solely for hypothetical future needs.
@@ -40,9 +40,15 @@ Build maintainable, lightweight frontend applications using the established pers
 
 ## Specifications and documentation
 
-- Keep concise, behavior-oriented Markdown specifications in `specs/` for significant features and decisions.
+- Keep concise, behavior-oriented Markdown specifications in `specs/` for significant features and decisions. Do not create placeholder documentation.
 - Update relevant specifications when behavior changes; avoid documentation that merely restates code.
-- Keep `README.md` focused on setup, development, build, and deployment instructions rather than agent session history.
+- Keep `README.md` concise as the project entry point, focused on setup, development, build, and deployment. Put user-facing details in `docs/` when they warrant a separate page.
+- Do not modify `README.md` or files under `docs/` unless explicitly requested,
+  except `docs/SCRATCHPAD.md`, which may be created, edited, cleared, or deleted
+  as needed to note potential documentation additions, corrections, or removals.
+- Keep scratchpad notes short and contextual, with no assigned owner or review
+  schedule. Review them separately when requested, then clear or delete them;
+  the scratchpad is not a permanent journal or backlog.
 - Record project-specific constraints and invariants in the project's own `AGENTS.md` as they emerge.
 
 ## Implementation and deployment

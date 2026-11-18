@@ -20,7 +20,7 @@ Build maintainable Python APIs for personal applications with a consistent, ligh
 
 ## Project organization
 
-- Keep application code in `app/`, tests in `tests/`, functional specifications in `specs/` when useful, runtime data in `data/`, and application configuration in `conf/`.
+- Keep application code in `app/`, tests in `tests/`, runtime data in `data/`, and application configuration in `conf/`.
 - Keep development, maintenance, and administration utility scripts in `scripts/`.
 - Keep deployment-specific scripts and configuration in `deploy/` when deployment tooling is needed; do not mix deployment procedures with general-purpose utility scripts.
 - Use `data/` for persistent application files (including SQLite databases); exclude runtime data from version control and never treat it as disposable build output.
@@ -53,7 +53,13 @@ The following requirements apply only when the application uses a database.
 
 - Maintain concise Markdown specifications in `specs/` for significant features, API contracts, and business rules.
 - Update relevant specifications when behavior changes; document observable behavior and constraints rather than narrating implementation details.
-- Keep `README.md` focused on setup, development, configuration, and deployment, not agent session history.
+- Keep `README.md` concise as the project entry point, focused on setup, development, configuration, and deployment. Put user-facing details in `docs/` when they warrant a separate page.
+- Do not modify `README.md` or files under `docs/` unless explicitly requested,
+  except `docs/SCRATCHPAD.md`, which may be created, edited, cleared, or deleted
+  as needed to note potential documentation additions, corrections, or removals.
+- Keep scratchpad notes short and contextual, with no assigned owner or review
+  schedule. Review them separately when requested, then clear or delete them;
+  the scratchpad is not a permanent journal or backlog.
 - Record project-specific invariants in the project's own `AGENTS.md`.
 
 ## Workflow and deployment

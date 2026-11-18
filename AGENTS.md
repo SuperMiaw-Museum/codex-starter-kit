@@ -7,13 +7,24 @@ This root AGENTS.md is authoritative for maintenance of codex-starter-kit.
   destination projects; do not apply their contents to repository maintenance.
 - Keep project templates in flat, named directories under `templates/` and
   `bootstrap/` for the Codex remote workflow. Keep documentation and paths aligned.
-- User-facing documentation (`README.md` and `docs/`) is maintained by ChatGPT,
-  not Codex. Do not modify these files unless ChatGPT explicitly delegates the
-  changes. Keep technical specifications in `specs/`.
+- Do not modify `README.md` or files under `docs/` unless explicitly requested,
+  except `docs/SCRATCHPAD.md`, which may be created, edited, cleared, or deleted
+  as needed.
 - Preserve simple, portable Bash scripts and their executable permissions. Verify
   all bootstrap shell files with `bash -n` after changes.
 - Work in the existing repository directory. Do not rename it, initialize Git,
   modify installed home-directory scripts, or deploy unless explicitly requested.
+
+# Documentation
+
+- Keep `README.md` concise as the project entry point. Put user-facing details
+  in `docs/` when they warrant a separate page, technical contracts in
+  `specs/`, and standing rules for agents in this `AGENTS.md`.
+- Do not change official documentation as a side effect of implementation.
+  Record potential additions, corrections, or removals in `docs/SCRATCHPAD.md`
+  instead. Keep observations concise and contextual; create the file only when
+  needed. Review them separately when requested, then clear or delete the file.
+  The scratchpad is temporary, not a journal or backlog.
 
 # Language policy
 

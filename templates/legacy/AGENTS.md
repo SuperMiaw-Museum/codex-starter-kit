@@ -30,13 +30,21 @@ Gradually make this hand-written legacy project easier for humans and coding age
 - **If a new or different testing framework is needed, STOP before installing, configuring, or using it.** Explain the limitations and alternatives, and ask the user to discuss the choice with ChatGPT before proceeding.
 - If testing cannot reasonably proceed without that decision, report this limitation; do not silently select a framework.
 
-## Specifications
+## Specifications and documentation
 
 - Document significant new or changed behavior in concise Markdown files under `specs/`.
 - Update an existing relevant spec instead of duplicating it.
 - Describe observable behavior, intent, constraints, and important edge cases, not a line-by-line implementation.
 - Do not launch retroactive documentation or reverse-engineering work unrelated to the current task.
 - Skip new specs for trivial or purely internal changes.
+- Keep `README.md` concise as the project entry point. Follow established documentation conventions and use `docs/` for details that warrant a separate page.
+- Do not modify `README.md` or files under `docs/` unless explicitly requested,
+  except `docs/SCRATCHPAD.md`, which may be created, edited, cleared, or deleted
+  as needed to note potential documentation additions, corrections, or removals.
+- Record project-specific invariants in the project's own `AGENTS.md`.
+- Keep scratchpad notes short and contextual, with no assigned owner or review
+  schedule. Review them separately when requested, then clear or delete them;
+  the scratchpad is not a permanent journal or backlog.
 
 ## Workflow
 

@@ -45,5 +45,14 @@ Write small, maintainable FreeBSD administration scripts. Prefer native system u
 - Run `shfmt -ln posix -i 4 -d`, `shellcheck -s sh`, and `sh -n` on modified shell scripts.
 - Report missing development tools and checks not run. Do not install dependencies without explicit human approval.
 - Add focused tests for meaningful behavior and regressions when practical, especially for failure handling and destructive operations.
-- Keep tests in `tests/` and concise behavioral specifications and operational notes in `specs/` when useful. Do not create placeholder files or unnecessary documentation.
+- Keep tests in `tests/`.
+- Keep `README.md` concise as the project entry point for setup and usage. Put user-facing details in `docs/` when they warrant a separate page.
+- Use `specs/` for concise behavioral contracts and operational constraints when useful. Do not create placeholder documentation.
+- Do not modify `README.md` or files under `docs/` unless explicitly requested,
+  except `docs/SCRATCHPAD.md`, which may be created, edited, cleared, or deleted
+  as needed to note potential documentation additions, corrections, or removals.
+- Record project-specific invariants in the project's own `AGENTS.md`.
+- Keep scratchpad notes short and contextual, with no assigned owner or review
+  schedule. Review them separately when requested, then clear or delete them;
+  the scratchpad is not a permanent journal or backlog.
 - Preserve existing behavior unless the task explicitly changes it. Make minimal, localized edits and report changes, checks, and limitations.
