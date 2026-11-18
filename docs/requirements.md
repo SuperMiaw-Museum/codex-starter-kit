@@ -76,6 +76,8 @@ Configure OPNsense with the following firewall policy:
 
 Before connecting ChatGPT, verify that the sandbox can access the Internet but cannot reach the host's LAN, the administration network or the firewall's management interfaces. Verify that SSH access works only through the intended administration path.
 
+_Note: I replaced OPNsense with Debian for easier maintenance and faster boot times. Both Debian machines were configured with ChatGPT’s help, including automatic updates at boot with a 24-hour cooldown. The firewall VM now uses bridged networking, and I access the internal machine through it using SSH ProxyJump._
+
 ## File synchronization
 
 The VM's network isolation should not depend on granting it access to remote Git repositories. For optional file transfers between your trusted machine and the VM without using Git inside the VM, see [codex-sync](https://github.com/SuperMiaw/codex-sync). This is a convenience tool, not a security boundary or a mandatory dependency.
