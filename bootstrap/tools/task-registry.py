@@ -22,6 +22,13 @@ def clean(value, limit):
     return ''.join(c if c.isprintable() else ' ' for c in value)[:limit]
 
 
+def task_label(value):
+    label = clean(value, LABEL_LIMIT)
+    if len(value) > LABEL_LIMIT:
+        label += '...'
+    return label
+
+
 def identity(pid):
     try:
         data = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
@@ -71,7 +78,7 @@ def read_state():
             raise ValueError('Invalid process identity')
         # Never echo control characters from a damaged or hand-edited registry.
         task['project'] = clean(task['project'], 80)
-        task['label'] = clean(task['label'], LABEL_LIMIT)
+        task['label'] = task_label(task['label'])
     return state
 
 
@@ -135,15 +142,15 @@ def main(args):
     command = args[0]
     if command == 'start' and len(args) in (3, 4):
         task = dict(started=time.time(), project=clean(args[1], 80),
-                    label=clean(args[2], LABEL_LIMIT), mode='Manual')
+                    label=task_label(args[2]), mode='Manual')
         if len(args) == 4:
             pid = int(args[3])
             stamp = identity(pid)
             if stamp is None:
                 raise ValueError('Cannot identify Codex runner')
             task.update(mode='Codex', pid=pid, identity=stamp)
-            if os.environ.get('CODEX_STARTER_KIT_SHOW_FULL_PROMPT') == '1':
-                full_prompt = args[2]
+        if os.environ.get('CODEX_STARTER_KIT_SHOW_FULL_PROMPT') == '1':
+            full_prompt = args[2]
     elif command == 'end' and len(args) in (3, 4):
         if not re.fullmatch('[0-9a-f]{32}', args[1]) or not re.fullmatch('[0-9]{1,3}', args[2]):
             raise ValueError('Invalid token or exit code')
@@ -176,10 +183,14 @@ def main(args):
             fcntl.flock(lock, fcntl.LOCK_SH if command == 'status' else fcntl.LOCK_EX)
             state = read_state()
             if command == 'status':
-                active = {key: value for key, value in state.items() if not stale(value)}
+                active = [task for task in state.values() if not stale(task)]
                 print(f'🤖 {len(active)} active tasks ({len(state) - len(active)} stale)')
-                for key, value in active.items():
-                    print(f"{key} {value['mode']} [{value['project']}] — {value['label']}")
+                if active:
+                    print()
+                for task in active:
+                    started = time.strftime('%Y-%m-%d %H:%M', time.localtime(task['started']))
+                    print(f"{started} {task['mode']} [{task['project']}]")
+                    print(f"  {task['label']}")
                 return 0
             if command == 'end' and args[1] not in state:
                 print('Unknown or expired token', file=sys.stderr)
@@ -193,14 +204,11 @@ def main(args):
                     token = secrets.token_hex(16)
                 state[token] = task
                 marker = '🚀 START'
-                if task['mode'] == 'Manual':
-                    suffix = f" — {task['label']}"
-                elif full_prompt is not None:
+                if full_prompt is not None:
                     suffix = ''
                 else:
-                    suffix = f" {task['label']}"
-                    if len(args[2]) > LABEL_LIMIT:
-                        suffix += '...'
+                    prefix = ' — ' if task['mode'] == 'Manual' else ' '
+                    suffix = prefix + task['label']
             else:
                 task = state.pop(args[1])
                 marker = '✅ END' if code == 0 else '❌ ERROR'

@@ -1,5 +1,3 @@
-<!-- codex-starter-kit version: 1.0.0 -->
-
 ## Task runner and notifications
 
 ```bash
@@ -40,7 +38,11 @@ Malformed registry entries reject a transition before any state write or notice;
 project names and labels are sanitized again when read. Do not edit registry files
 to adjust the count: it is derived from task identities, never stored separately.
 
-Read-only `status` lists active tokens and stale counts. Dead Codex runners are
+Read-only `status` shows active and stale counts. Each active task uses two lines:
+`YYYY-MM-DD HH:MM Codex [project]` or `YYYY-MM-DD HH:MM Manual [project]` in local
+time, followed by its label indented by two spaces. The label uses up to 120
+characters with `...` appended when truncated. Status uses the same label
+whether or not full START prompts are enabled. Dead Codex runners are
 recognized by PID, process start identity and boot ID; manual tasks expire after
 24 hours. Stale entries are excluded from status and pruned during the next
 successful transition. There is no automatic monitor. A valid END can still
@@ -49,9 +51,9 @@ remove registry files while tasks run. Crashes after an atomic state commit may
 lose a notification, and SIGKILL cannot run the runner's END trap. Terminal
 delivery is best effort; use task output and exit status to assess success.
 
-By default, Codex START shows a single-line task preview of up to 120
+By default, Manual and Codex START show a single-line task preview of up to 120
 characters. A truncated preview adds `...` after those characters.
-Set `CODEX_STARTER_KIT_SHOW_FULL_PROMPT=1` in the runner's environment to show
+Set `CODEX_STARTER_KIT_SHOW_FULL_PROMPT=1` in the task's environment to show
 only the START header on the first line and the full task prompt below it in
 the SSH terminal. The prompt keeps its line breaks and backslashes and is
 written as plain text. The registry stores only the bounded label.

@@ -1,5 +1,4 @@
 # Remote work instructions for ChatGPT
-<!-- codex-starter-kit version: 2.3.0 -->
 
 ## On receipt
 

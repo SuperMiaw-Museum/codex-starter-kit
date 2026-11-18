@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# codex-starter-kit version: 2.3.0
 set -Eeuo pipefail
 
 usage() {
@@ -7,10 +6,10 @@ usage() {
 Usage: ./release.sh [--bump major|minor|patch] | --check | --help
 
 Choose a bump interactively when omitted. Confirm once (default: no), update
-version banners, commit, create an annotated X.Y.Z tag, and atomically push
+bootstrap/version.txt, commit, create an annotated X.Y.Z tag, and atomically push
 main and the tag to origin. Requires a clean checkout on main, synchronized
 with origin/main, and an interactive terminal. No automatic rollback.
---check validates versions without writing; it also checks CI tag context.
+--check validates bootstrap/version.txt and CI tag context without writing.
 GitHub Actions prepares a draft release for manual publication.
 HELP
 }
@@ -30,25 +29,17 @@ root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 trap 'echo "No rollback performed. Inspect git status, git log -1 and git tag before retrying; after a failed push, check origin. Local changes, commits or tags may remain." >&2' ERR
 trap 'exit 1' INT TERM
 cd "$root"
-files=(release.sh bootstrap/setup.sh bootstrap/remote-control.sh README.md bootstrap/PROMPT.md)
 version=$(cat bootstrap/version.txt)
 semver='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
 [[ $version =~ ^$semver$ && $(wc -l < bootstrap/version.txt) -eq 1 && $(wc -c < bootstrap/version.txt) -eq $((${#version} + 1)) ]] || fail 'version.txt must contain plain a.b.c and a newline'
-for file in "${files[@]}"; do
-    case $file in
-        *.sh) banner="# codex-starter-kit version: $version"; pattern="^# codex-starter-kit version: $semver$" ;;
-        *) banner="<!-- codex-starter-kit version: $version -->"; pattern="^<!-- codex-starter-kit version: $semver -->$" ;;
-    esac
-    [[ $(grep -Ec "$pattern" "$file") == 1 && $(grep -Fxc "$banner" "$file") == 1 ]] || fail "$file: expected exactly one valid banner matching version.txt"
-done
 if $check; then
     tag=${CI_COMMIT_TAG:-}
     [[ ${GITHUB_REF:-} != refs/tags/* ]] || tag=${GITHUB_REF#refs/tags/}
-    if [[ -n $tag ]]; then
+    if [[ -n $tag || ${GITHUB_REF:-} == refs/tags/* ]]; then
         [[ $tag == "$version" ]] || fail 'release tag must equal version.txt'
-        [[ $(git rev-parse "refs/tags/$tag^{commit}") == "$(git rev-parse HEAD)" ]] || fail 'release tag must point to HEAD'
+        [[ $(git rev-parse --verify "refs/tags/$tag^{commit}") == "$(git rev-parse HEAD)" ]] || fail 'release tag must point to HEAD'
     fi
-    echo "Version banners consistent: $version"
+    echo "Version check passed: $version"
     exit 0
 fi
 [[ -t 0 && -t 1 ]] || fail 'An interactive terminal (TTY) is required.'
@@ -89,29 +80,16 @@ case $answer in
     [yY]|[yY][eE][sS]) ;;
     *) echo 'Cancelled; nothing changed.'; exit 0 ;;
 esac
-perform_release() {
-    temp=$(mktemp -d)
-    trap 'rm -rf -- "$temp"' EXIT
-    for file in "${files[@]}"; do
-        awk -v old="$version" -v new="$target" '
-            $0 == "# codex-starter-kit version: " old { $0 = "# codex-starter-kit version: " new }
-            $0 == "<!-- codex-starter-kit version: " old " -->" { $0 = "<!-- codex-starter-kit version: " new " -->" }
-            { print }
-        ' "$file" > "$temp/rendered"
-        cat "$temp/rendered" > "$file"
-    done
-    printf '%s\n' "$target" > bootstrap/version.txt
-    echo 'Committing version bump...'
-    git add -- bootstrap/version.txt "${files[@]}"
-    git commit -m 'build: bump version'
-    # Hooks must not silently change release content or leave unexpected files.
-    ./release.sh --check
-    [[ $(cat bootstrap/version.txt) == "$target" ]] || fail 'Commit changed the target version; inspect before tagging.'
-    [[ -z $(git status --porcelain --untracked-files=all) ]] || fail 'Commit left a dirty worktree; inspect before tagging.'
-    echo "Creating annotated tag $target..."
-    git tag -a "$target" -m "$target"
-    echo "Pushing main and $target atomically..."
-    git -c push.followTags=false push --atomic origin main "$target"
-    echo "Pushed release tag $target; GitHub Actions prepares a draft for manual publication."
-}
-perform_release
+printf '%s\n' "$target" > bootstrap/version.txt
+echo 'Committing version bump...'
+git add -- bootstrap/version.txt
+git commit -m 'build: bump version'
+# Hooks must not silently change release content or leave unexpected files.
+./release.sh --check
+[[ $(cat bootstrap/version.txt) == "$target" ]] || fail 'Commit changed the target version; inspect before tagging.'
+[[ -z $(git status --porcelain --untracked-files=all) ]] || fail 'Commit left a dirty worktree; inspect before tagging.'
+echo "Creating annotated tag $target..."
+git tag -a "$target" -m "$target"
+echo "Pushing main and $target atomically..."
+git -c push.followTags=false push --atomic origin main "$target"
+echo "Pushed release tag $target; GitHub Actions prepares a draft for manual publication."

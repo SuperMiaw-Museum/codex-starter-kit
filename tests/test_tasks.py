@@ -1,5 +1,6 @@
 """Offline task tests with a private registry, fake Codex, and isolated terminals."""
 import concurrent.futures
+from datetime import datetime, timedelta, timezone
 import importlib.util
 import io
 import itertools
@@ -61,6 +62,40 @@ class TaskTests(unittest.TestCase):
         self.assertRegex(result.stdout, r'🤖 0 ❌ ERROR Manual \[project\] \(\d+s\)')
         self.assertEqual(self.run_task('end', token, '0').returncode, 3)
         self.assertIn('🤖 0 active tasks', self.run_task('status').stdout)
+
+    def test_manual_full_prompt_format(self):
+        self.env['CODEX_STARTER_KIT_SHOW_FULL_PROMPT'] = '1'
+        label = 'Short manual task\nwith details'
+        result = self.start(label)
+        self.assertRegex(result.stderr, r'🚀 START Manual \[project\]\n$')
+        self.assertNotIn(label, result.stderr)
+        self.assertEqual(self.state()[result.stdout.strip()]['label'], 'Short manual task with details')
+        self.assertEqual(self.run_task('end', result.stdout.strip(), '0').returncode, 0)
+
+    def test_status_readable_truncation(self):
+        self.env['TZ'] = 'EST5'
+        self.start('A short\ntask')
+        self.start('x' * 120)
+        self.start('y' * 121)
+        codex = subprocess.run(
+            [str(self.bundle / 'tools/notify-task-done.sh'), 'start', 'other', 'Codex task', str(os.getpid())],
+            env=self.env, text=True, capture_output=True)
+        self.assertEqual(codex.returncode, 0, codex.stderr)
+
+        # Interpret the recorded timestamps in the same fixed local timezone.
+        local_zone = timezone(timedelta(hours=-5))
+        dates = [datetime.fromtimestamp(task['started'], local_zone).strftime('%Y-%m-%d %H:%M')
+                 for task in self.state().values()]
+        status = self.run_task('status')
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertEqual(status.stdout, (
+            '🤖 4 active tasks (0 stale)\n\n'
+            f'{dates[0]} Manual [project]\n  A short task\n'
+            f'{dates[1]} Manual [project]\n  {"x" * 120}\n'
+            f'{dates[2]} Manual [project]\n  {"y" * 120}...\n'
+            f'{dates[3]} Codex [other]\n  Codex task\n'))
+        self.env['CODEX_STARTER_KIT_SHOW_FULL_PROMPT'] = '1'
+        self.assertEqual(self.run_task('status').stdout, status.stdout)
 
     def test_concurrent_start_end_and_duplicate(self):
         with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
@@ -246,7 +281,7 @@ class TaskTests(unittest.TestCase):
                 active = json.loads((self.root / 'active.json').read_text())
                 registered_task, = active.values()
                 self.assertEqual(set(registered_task), {'started', 'project', 'label', 'mode', 'pid', 'identity'})
-                self.assertEqual(registered_task['label'], task.replace('\n', ' ')[:120])
+                self.assertEqual(registered_task['label'], task.replace('\n', ' ')[:120] + '...')
                 self.assertEqual(self.state(), {})
 
     def test_runner_start_preview_length(self):

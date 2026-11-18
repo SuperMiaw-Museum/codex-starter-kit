@@ -100,6 +100,7 @@ class BootstrapTests(unittest.TestCase):
         result = self.run_script('remote-control.sh', '--show')
         self.assertEqual(result.returncode, 0)
         self.assertIn(f'Read "{self.bundle}/PROMPT.md"', result.stderr)
+        self.assertIn('CODEX STARTER KIT · 2.3.0', result.stderr)
         self.assertNotIn('\x1b[', result.stderr)
         self.assertFalse(self.state.exists())
 
@@ -108,7 +109,9 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(result.stderr, '')
         self.assertFalse(self.state.exists())
 
-    def test_concurrent_once_and_new_boot(self):
+    def test_every_eligible_session_displays_reminder(self):
+        self.assertIn('COPY THIS PROMPT INTO CHATGPT',
+                      self.run_script('remote-control.sh', '--show').stderr)
         sessions = [self.automatic() for _ in range(5)]
         outputs = [self.finish(pair) for pair in sessions]
         self.assertEqual(sum(b'COPY THIS PROMPT INTO CHATGPT' in out for out in outputs), 5)
@@ -139,6 +142,7 @@ class BootstrapTests(unittest.TestCase):
         result = self.run_script('remote-control.sh', '--once')
         self.assertEqual(result.returncode, 23)
         self.assertIn(f'Read "{self.bundle}/PROMPT.md"', result.stderr)
+        self.assertIn('CODEX STARTER KIT · 2.3.0', result.stderr)
         self.assertLess(result.stderr.index('COPY THIS PROMPT INTO CHATGPT'),
                         result.stderr.index('bridge: @wonderwhy-er/desktop-commander@latest remote'))
         self.assertEqual(list(self.home.iterdir()), [nvm])
@@ -322,33 +326,42 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(self.finish(self.automatic()), b'')
         self.assertFalse(self.state.exists())
 
-    def test_update_independent_of_reminder_and_components(self):
-        self.assertIn(b'COPY THIS PROMPT INTO CHATGPT', self.finish(self.automatic()))
+    def test_reminder_ignores_old_receipts(self):
         receipts = self.home / '.local/state/codex-starter-kit'
         receipts.mkdir(parents=True, mode=0o700)
-        (receipts / 'hook').write_text('0.0.1\n')
+        receipt = receipts / 'hook'
+        receipt.write_text('0.0.1\n')
+        (self.bundle / 'version.txt').unlink()
         output = self.finish(self.automatic())
-        self.assertIn(b'Hook: 0.0.1', output)
         self.assertIn(b'COPY THIS PROMPT INTO CHATGPT', output)
-        self.assertIn(b'Hook: 0.0.1', self.finish(self.automatic()))
-        (receipts / 'service').write_text('0.0.2\n')
-        self.assertIn(b'Service: 0.0.2', self.finish(self.automatic()))
-        (self.bundle / 'version.txt').write_text('0.2.0\n')
-        self.assertEqual(self.finish(self.automatic()).count(b'Setup outdated'), 1)
+        self.assertIn(b'Remote Desktop Commander:', output)
+        self.assertNotIn(b'Setup outdated', output)
+        self.assertIn(b'COPY THIS PROMPT INTO CHATGPT', self.finish(self.automatic()))
+        self.assertEqual(receipt.read_text(), '0.0.1\n')
 
     def test_hook_idempotence_and_preservation(self):
         rc = self.home / '.bashrc'
         rc.write_text('# existing\nexport KEEP=yes\n')
         rc.chmod(0o640)
         self.assertEqual(self.run_script('setup.sh', '--install-hook').returncode, 0)
+        with rc.open('a') as file:
+            file.write('# added after setup\n')
         first = rc.read_bytes()
+        inode = rc.stat().st_ino
+        (self.bundle / 'version.txt').unlink()
         self.assertEqual(self.run_script('setup.sh', '--install-hook').returncode, 0)
         self.assertEqual(rc.read_bytes(), first)
         self.assertTrue(first.startswith(b'# existing\nexport KEEP=yes\n'))
+        self.assertTrue(first.endswith(b'# added after setup\n'))
         self.assertEqual(first.count(b'# BEGIN'), 1)
-        self.assertEqual((self.home / '.local/state/codex-starter-kit/hook').read_text(), (self.bundle / 'version.txt').read_text())
+        self.assertEqual(rc.stat().st_ino, inode)
+        self.assertEqual(list(self.home.iterdir()), [rc])
+        self.assertFalse(self.calls.exists())
         self.assertEqual(rc.stat().st_mode & 0o777, 0o640)
         subprocess.run(['bash', '-n', str(rc)], check=True)
+        rc.write_bytes(first.replace(b'--auto', b'--show'))
+        self.assertEqual(self.run_script('setup.sh', '--install-hook').returncode, 0)
+        self.assertEqual(rc.read_bytes(), first)
 
     def test_service_preview_install_update(self):
         unit = self.home / '.config/systemd/user/desktop-commander.service'
@@ -357,14 +370,16 @@ class BootstrapTests(unittest.TestCase):
         self.assertFalse(unit.exists())
         self.assertFalse(self.calls.exists())
         self.assertFalse((self.home / '.local/state/codex-starter-kit').exists())
+        (self.bundle / 'version.txt').unlink()
         self.assertEqual(self.run_script('setup.sh', '--install-service').returncode, 0)
         self.assertEqual(self.calls.read_text(), '--user daemon-reload\n')
-        self.run_script('setup.sh', '--install-service')
+        self.assertEqual(self.run_script('setup.sh', '--install-service').returncode, 0)
         self.assertEqual(self.calls.read_text(), '--user daemon-reload\n')
         unit.write_text('old installed unit\n')
-        self.run_script('setup.sh', '--install-service')
+        self.assertEqual(self.run_script('setup.sh', '--install-service').returncode, 0)
         self.assertEqual(Path(str(unit) + '.backup').read_text(), 'old installed unit\n')
         self.assertEqual(self.calls.read_text(), '--user daemon-reload\n' * 2)
+        self.assertEqual(list(self.home.iterdir()), [self.home / '.config'])
         self.assertIn('Restart=always', unit.read_text())
         self.assertIn('checkout with spaces', unit.read_text())
 

@@ -12,7 +12,7 @@ install tools, authenticate, start services, or change the environment on receip
 The human explicitly runs `bootstrap/setup.sh --install-hook` and/or
 `--install-service` if wanted; do not run setup on receipt of this prompt.
 `remote-control.sh` is a preparation reminder, not a bridge launcher. Its optional
-interactive Bash hook shows once per boot for eligible human terminals and skips
+interactive Bash hook shows on every eligible human terminal and skips
 recognized Codex/Desktop Commander ancestry. Detection is a convenience heuristic,
 not a security boundary. A verified SSH executable ends the ancestry walk;
 protected root SSH parents are not required to be readable. Other ambiguous
@@ -21,11 +21,8 @@ Setup checks the relevant requirements before mutation; preview reports missing
 requirements without writing files. `check-requirements.sh hook|service|tools|all`
 is read-only and never installs or downloads dependencies. Terminal reminder
 banners use color; the copy/paste instruction remains plain.
-Explicit setup records hook and service versions separately in private user state.
-On eligible human logins, installed/checkout mismatches warn once per boot and
-version pair independently of the ordinary reminder. They suggest explicit setup;
-they never install updates or restart services. Versions are compared literally.
-`--show` is unconditional and does not consume either automatic notice.
+Explicit setup compares the desired and installed content for the selected
+component. `--show` displays the reminder without consuming the automatic notice.
 Service updates reload the user manager but leave a running connection untouched;
 starting or restarting the bridge is a separate human operation.
 
@@ -111,8 +108,8 @@ manual-task.sh status
 START prints a random 32-hex token alone on stdout and its notification on stderr.
 Save the token unchanged; END retrieves the original project, label and start time.
 Capture the task's exit status immediately and send END on failure as well as
-success. The helper's status is not the task's status. Do not retry START after
-losing its output: use `status` to find the token first.
+success. The helper's status is not the task's status. Save the token from START
+to finish the task later. Do not retry START after losing its output.
 
 Run this example only for a requested task, never on receipt or during preflight:
 
@@ -141,7 +138,8 @@ Python 3 and Linux `/proc`. It locks updates and notification delivery together.
 Dead/reused Codex runner processes and manual tasks older than 24 hours are
 excluded from status and pruned on the next successful START/END. Manual tasks
 can span remote sessions; finish them within 24 hours. `status` is read-only and
-shows active tokens and stale counts. It never monitors tasks or changes services.
+shows active and stale counts plus each active task's local start time, mode,
+project and bounded label. It never monitors tasks or changes services.
 A rejected END preserves other tasks; retry a failed END with the same token.
 An unknown/expired token returns 3; invalid input or registry errors return 2.
 An END can still finish a stale token until a successful transition prunes it.

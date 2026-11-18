@@ -1,16 +1,11 @@
-<!-- codex-starter-kit version: 1.0.0 -->
-
 ## Versions and releases
 
 `bootstrap/version.txt` contains strict `a.b.c` plus a newline, without leading
 zeroes or a `v` prefix. Tags use exactly that version as both annotated tag name
-and message. The fixed watermark list is `release.sh`, `bootstrap/setup.sh`,
-`bootstrap/remote-control.sh`, `README.md`, and `bootstrap/PROMPT.md`.
-Shell markers use comments; Markdown markers use HTML comments. Other spec
-watermarks are historical and are not release version files.
+and message.
 
-`./release.sh --check` validates each marker exactly once and requires it to
-match version.txt. It is read-only and works without Git. In GitHub tag builds
+`./release.sh --check` validates `bootstrap/version.txt`. It is read-only and
+works without Git outside of tag builds. In GitHub tag builds
 (or `CI_COMMIT_TAG` context), the version must equal the tag and the tag must
 point to HEAD. GitHub's tag context takes precedence. CI checks branches and tags.
 
@@ -24,7 +19,7 @@ point to HEAD. GitHub's tag context takes precedence. CI checks branches and tag
 
 There is no explicit version, --draft, --yes, --no-bump or publication mode.
 Invalid arguments exit 2; help requires neither Git nor a terminal. A release
-requires stdin and stdout terminals. Before prompting, validate all watermarks,
+requires stdin and stdout terminals. Before prompting, validate `bootstrap/version.txt`,
 require a clean index and worktree (including untracked files), main tracking
 origin/main, and HEAD equal to both the tracking ref and the live remote main.
 Require configured author/committer identity and one identical origin fetch/push
@@ -42,8 +37,8 @@ Display current version, bump and target, then ask
 whitespace ignored, confirms. Declining exits 0 and changes nothing. EOF or an
 interruption fails. There is no default bump and no automatic confirmation.
 
-On confirmation synchronize the six version files, explicitly stage only those
-paths, commit `build: bump version`, recheck versions and clean status, then run:
+On confirmation update and stage only `bootstrap/version.txt`, commit
+`build: bump version`, recheck the version and clean status, then run:
 
 ```bash
 git tag -a VERSION -m VERSION

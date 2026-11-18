@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# codex-starter-kit version: 2.3.0
 # Explicit, user-invoked setup only. With no options, preview the managed unit.
 set -euo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
-source "$script_dir/.version-state.sh"
 unit_path=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/desktop-commander.service
 render_unit() {
   # systemd quoted arguments: escape backslashes, quotes, specifiers and env syntax.
@@ -23,28 +21,34 @@ case ${1:---preview} in
     [[ ! -L $rc && ( ! -e $rc || -f $rc ) ]] || { echo 'Refusing non-regular .bashrc' >&2; exit 1; }
     begin='# BEGIN codex-starter-kit reminder'
     end='# END codex-starter-kit reminder'
+    printf -v reminder '%q' "$script_dir/remote-control.sh"
+    printf -v hook '%s\ncase $- in *i*) /usr/bin/bash %s --auto ;; esac\n%s' "$begin" "$reminder" "$end"
     temp=$(mktemp "$HOME/.bashrc.codex.XXXXXX")
     trap 'rm -f -- "$temp"' EXIT
     if [[ -e $rc ]]; then
       # Abort on malformed managed blocks instead of discarding user content.
-      awk -v b="$begin" -v e="$end" '
-        $0==b {if (inside) exit 2; inside=1; next}
+      HOOK="$hook" awk -v b="$begin" -v e="$end" '
+        $0==b {
+          if (inside) exit 2
+          inside=1
+          if (!found) print ENVIRON["HOOK"]
+          found=1
+          next
+        }
         $0==e {if (!inside) exit 2; inside=0; next}
         !inside {print}
-        END {if (inside) exit 2}' "$rc" > "$temp"
+        END {if (inside) exit 2; if (!found) print ENVIRON["HOOK"]}' "$rc" > "$temp"
       chmod --reference="$rc" "$temp"
+    else
+      printf '%s\n' "$hook" > "$temp"
     fi
-    printf '%s\n' "$begin" >> "$temp"
-    printf -v reminder '%q' "$script_dir/remote-control.sh"
-    printf 'case $- in *i*) /usr/bin/bash %s --auto ;; esac\n%s\n' "$reminder" "$end" >> "$temp"
-    # Avoid accumulating blank lines on repeated setup.
     if [[ -f $rc ]] && cmp -s "$temp" "$rc"; then
       echo 'Reminder hook already current.'
     else
       mv -- "$temp" "$rc"
       echo 'Reminder hook installed in ~/.bashrc (takes effect in a new interactive Bash).'
     fi
-    record_version hook ;;
+    ;;
   --install-service)
     "$script_dir/check-requirements.sh" service
     mkdir -p -- "$(dirname -- "$unit_path")"
@@ -64,6 +68,6 @@ case ${1:---preview} in
     echo 'No service was started, stopped, restarted, or enabled.'
     echo 'When ready to disconnect/reconnect manually: systemctl --user restart desktop-commander.service'
     echo 'Optional boot/login activation: systemctl --user enable desktop-commander.service'
-    record_version service ;;
+    ;;
   *) echo "Usage: $0 [--preview|--install-hook|--install-service]" >&2; exit 2 ;;
 esac

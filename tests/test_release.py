@@ -11,7 +11,8 @@ import time
 import unittest
 
 SOURCE = Path(__file__).resolve().parents[1]
-FILES = ('bootstrap/version.txt', 'release.sh', 'bootstrap/setup.sh',
+VERSION_FILE = 'bootstrap/version.txt'
+FILES = (VERSION_FILE, 'release.sh', 'bootstrap/setup.sh',
          'bootstrap/remote-control.sh', 'README.md', 'bootstrap/PROMPT.md')
 
 
@@ -33,7 +34,7 @@ class ReleaseTests(unittest.TestCase):
             if key.startswith(('GIT_', 'GITHUB_', 'CI_COMMIT_TAG')) and key not in (
                     'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_GLOBAL', 'GIT_TERMINAL_PROMPT'):
                 self.env.pop(key)
-        self.version = (self.root / FILES[0]).read_text().strip()
+        self.version = (self.root / VERSION_FILE).read_text().strip()
 
     def run_cli(self, *args, **env):
         return subprocess.run(['./release.sh', *args], cwd=self.root,
@@ -93,21 +94,12 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(self.run_cli('--check').returncode, 0)
         self.assertEqual(before, self.snapshot())
 
-    def test_all_markers_validated(self):
-        for name in FILES[1:]:
-            path = self.root / name
-            original = path.read_text()
-            for content in (original.replace(self.version, '99.0.0'),
-                            original + next(line for line in original.splitlines(True)
-                                            if 'codex-starter-kit version:' in line),
-                            '\n'.join(line for line in original.splitlines()
-                                      if 'codex-starter-kit version:' not in line)):
-                path.write_text(content)
-                self.assertNotEqual(self.run_cli('--check').returncode, 0, name)
-            path.write_text(original)
-        for content in ('01.2.3\n', self.version, self.version + '\n\n'):
-            (self.root / FILES[0]).write_text(content)
-            self.assertNotEqual(self.run_cli('--check').returncode, 0)
+    def test_version_file_validated(self):
+        for content in ('01.2.3\n', self.version, self.version + '\n\n',
+                        'v' + self.version + '\n', self.version + '\r\n'):
+            with self.subTest(content=content):
+                (self.root / VERSION_FILE).write_text(content)
+                self.assertNotEqual(self.run_cli('--check').returncode, 0)
 
     def test_arguments_and_terminal(self):
         self.assertEqual(self.run_cli('--help').returncode, 0)
@@ -119,6 +111,8 @@ class ReleaseTests(unittest.TestCase):
 
     def test_tag_context(self):
         self.fixture()
+        self.assertNotEqual(self.run_cli('--check', CI_COMMIT_TAG=self.version).returncode, 0)
+        self.assertNotEqual(self.run_cli('--check', GITHUB_REF='refs/tags/').returncode, 0)
         self.git('tag', '-a', self.version, '-m', self.version)
         self.assertEqual(self.run_cli('--check', CI_COMMIT_TAG=self.version).returncode, 0)
         self.assertNotEqual(self.run_cli('--check', GITHUB_REF='refs/tags/v' + self.version).returncode, 0)
@@ -152,7 +146,7 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(self.git('cat-file', '-t', target), 'tag')
             self.assertEqual(self.git('for-each-ref', '--format=%(contents)', 'refs/tags/' + target), target)
             self.assertEqual(self.git('log', '-1', '--format=%s'), 'build: bump version')
-            self.assertEqual(set(self.git('diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD').splitlines()), set(FILES))
+            self.assertEqual(set(self.git('diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD').splitlines()), {VERSION_FILE})
             self.assertEqual(self.git('--git-dir=' + str(self.remote), 'rev-parse', 'main'), self.git('rev-parse', 'HEAD'))
             self.assertEqual(self.git('--git-dir=' + str(self.remote), 'rev-parse', target), self.git('rev-parse', target))
             self.assertEqual(self.run_cli('--check').returncode, 0)
@@ -208,10 +202,8 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(self.git('--git-dir=' + str(self.remote), 'rev-parse', 'main'), self.initial)
         self.assertEqual(self.git('--git-dir=' + str(self.remote), 'tag'), '')
 
-    def test_self_update_across_version_length(self):
-        for name in FILES:
-            path = self.root / name
-            path.write_text(path.read_text().replace(self.version, '9.9.9'))
+    def test_bump_across_version_length(self):
+        (self.root / VERSION_FILE).write_text('9.9.9\n')
         self.fixture()
         code, output = self.interactive(('--bump', 'major'))
         self.assertEqual(code, 0, output)

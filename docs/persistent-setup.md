@@ -9,7 +9,7 @@ After completing the [requirements](requirements.md), run these commands in your
 ~/codex-starter-kit/bootstrap/setup.sh --install-service
 ```
 
-The hook displays the reminder in eligible interactive Bash SSH sessions. Start the service and attach to its terminal:
+The hook displays the reminder in every eligible interactive Bash SSH session. Start the service and attach to its terminal:
 
 ```bash
 systemctl --user start desktop-commander.service
@@ -22,24 +22,22 @@ Use the displayed connection details to connect from ChatGPT, then paste the rem
 ~/codex-starter-kit/bootstrap/remote-control.sh --show
 ```
 
-Restarting the bridge disconnects its current session. For notification settings and service configuration, see [advanced usage](advanced-usage.md).
+After updating the checkout, rerun `setup.sh` for any installed components you want to refresh. Changes are applied only when needed; the bridge is never restarted automatically.
 
-## Troubleshooting: interactive prompts in tmux
+For notification settings and service configuration, see [advanced usage](advanced-usage.md).
 
-The persistent bridge runs inside a tmux session. If Remote Desktop Commander stops responding, it may be waiting for an interactive confirmation (for example, an update prompt) in that session.
+## Troubleshooting
 
-Connect to the VM over SSH and inspect the terminal:
+If Remote Desktop Commander stops responding, check whether it is waiting for input:
 
 ```bash
 tmux attach -t desktop-commander
 ```
 
-If a prompt is present, read it and respond as appropriate (for example, `y` to confirm an intended update). Then detach **without terminating the session**: press `Ctrl+B`, release both keys, then press `D`.
+Respond to any pending prompt, then detach with `Ctrl+B`, `D` without stopping the session.
 
-Try connecting from ChatGPT again. If no prompt is visible, inspect the user service instead of assuming an update is blocking it:
+If no prompt is waiting, check the service:
 
 ```bash
 systemctl --user status desktop-commander.service
 ```
-
-Detaching tmux does not automatically answer future prompts; another interactive update may require the same intervention.

@@ -1,5 +1,3 @@
-<!-- codex-starter-kit version: 1.0.0 -->
-
 ## Getting started
 
 1. **Prepare the VM.** Follow [Security](#security) before connecting. Use a
@@ -34,21 +32,19 @@
    Service/tools resolve the existing NVM environment as their wrappers do.
    Nothing is installed or downloaded. Setup runs its relevant profile before any
    mutation. Preview checks the service profile, renders the unit even on failure,
-   returns the check status, and writes no files or receipts.
+   returns the check status, and writes no files.
 
-   Hook setup preserves existing `.bashrc` content and replaces its managed block
-   on repeat runs. It runs on interactive Bash startup (including login shells
-   whose profile sources `.bashrc`). If your login profile does not source
+   Hook setup preserves existing `.bashrc` content and writes the managed
+   block only when the resulting file differs. The hook runs on interactive Bash
+   startup (including login shells whose profile sources `.bashrc`). If your login profile does not source
    `.bashrc`, arrange that yourself. No setup runs automatically from this kit.
-   The first eligible human terminal per Linux VM boot displays the reminder;
-   subsequent interactive terminals are silent. Use
+   Every eligible interactive human SSH terminal displays the reminder. Use
    `bootstrap/remote-control.sh --show` to display it at any time, without consuming
    the automatic reminder. The displayed prompt uses this checkout's absolute path.
    Both manual and automatic banners use restrained ANSI color on a terminal;
    redirected output stays plain and the copy/paste instruction is unchanged.
 
-   Automatic display requires a terminal, readable Linux process ancestry and
-   boot ID, and `flock`. Ancestry matching skips Codex and Desktop Commander
+   Automatic display requires a terminal and readable Linux process ancestry. Ancestry matching skips Codex and Desktop Commander
    executable names and known interpreter script positions using Bash and readlink.
    SSH titles such as `sshd-session: codex@pts/1` and arbitrary argument text do
    not identify agents. SSH boundaries are verified through matching procfs `comm` and status `Name`,
@@ -57,23 +53,9 @@
    `cmdline`; every non-SSH descendant must expose both for agent inspection. Other unreadable
    ancestry fails closed. Renamed processes,
    unusual launchers, and detached ancestry can evade detection. This is a convenience
-   heuristic, not a security boundary. Missing prerequisites or unsafe `/tmp`
-   collisions silently skip display. State is private to the user in
-   `/tmp/codex-starter-kit-reminder-UID`, serialized with `flock`, and recorded
-   only after successful reminder output. Same-user processes remain trusted.
+   heuristic, not a security boundary..
 
-   Explicit successful hook/service setup records that component's checkout version
-   in a private `0700` directory at `${XDG_STATE_HOME:-$HOME/.local/state}/codex-starter-kit`.
-   Preview records nothing. Each component has its own receipt; rerunning one does
-   not acknowledge the other. Old installations without receipts need explicit setup
-   once before update detection is available. Versions are compared literally,
-   including downgrades. On the first eligible human terminal, each mismatch warns
-   once per boot and installed/checkout version pair, suggesting the matching setup
-   option. These warnings have independent markers: an earlier ordinary reminder
-   never hides a newly discovered mismatch. No update or restart happens automatically.
-   `--show` remains unconditional and does not inspect or change state.
-
-   Service setup compares full content (the managed unit also has a version hint),
+   Service setup compares the full unit content,
    backs up changed units to `.service.backup`, and runs user `daemon-reload` only
    after a change. It never starts, stops, restarts, or enables the bridge. It
    preserves the installed unit's tmux session, NVM loading, and restart policy.
