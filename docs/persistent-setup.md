@@ -26,6 +26,29 @@ After updating the checkout, rerun `setup.sh` for any installed components you w
 
 For notification settings and service configuration, see [advanced usage](advanced-usage.md).
 
+## Uninstall
+
+Run these steps as the VM user who installed the components. Skip anything you did not install.
+
+1. Edit `~/.bashrc` and remove only the block between `# BEGIN codex-starter-kit reminder` and `# END codex-starter-kit reminder` (including the markers). Preserve all other lines. If the markers are missing or malformed, inspect the file before editing.
+2. If you installed the user service, verify that `desktop-commander.service` is the kit-managed unit (its file begins with `# codex-starter-kit managed unit v1`):
+
+   ```bash
+   unit_path="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/desktop-commander.service"
+   systemctl --user show -p FragmentPath desktop-commander.service
+   head -n 1 -- "$unit_path"
+   ```
+
+   If the path and header match, remove the service:
+
+   ```bash
+   systemctl --user disable --now desktop-commander.service
+   rm -- "$unit_path"
+   systemctl --user daemon-reload
+   ```
+
+Stopping the service disconnects Remote Desktop Commander. Do not delete the repository, credentials, service backups or unrelated user files. Preserve any custom service changes before removal.
+
 ## Troubleshooting
 
 If Remote Desktop Commander stops responding, check whether it is waiting for input:
