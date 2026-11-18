@@ -23,3 +23,23 @@ Use the displayed connection details to connect from ChatGPT, then paste the rem
 ```
 
 Restarting the bridge disconnects its current session. For notification settings and service configuration, see [advanced usage](advanced-usage.md).
+
+## Troubleshooting: interactive prompts in tmux
+
+The persistent bridge runs inside a tmux session. If Remote Desktop Commander stops responding, it may be waiting for an interactive confirmation (for example, an update prompt) in that session.
+
+Connect to the VM over SSH and inspect the terminal:
+
+```bash
+tmux attach -t desktop-commander
+```
+
+If a prompt is present, read it and respond as appropriate (for example, `y` to confirm an intended update). Then detach **without terminating the session**: press `Ctrl+B`, release both keys, then press `D`.
+
+Try connecting from ChatGPT again. If no prompt is visible, inspect the user service instead of assuming an update is blocking it:
+
+```bash
+systemctl --user status desktop-commander.service
+```
+
+Detaching tmux does not automatically answer future prompts; another interactive update may require the same intervention.
