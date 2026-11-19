@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import tty
 import unittest
 from unittest.mock import patch
@@ -37,6 +38,7 @@ class TaskTests(unittest.TestCase):
         self.env.pop('CODEX_STARTER_KIT_SHOW_FULL_PROMPT', None)
         self.env.pop('CODEX_STARTER_KIT_NOTIFY_METADATA', None)
         self.env.pop('CODEX_STARTER_KIT_LIMIT_REMINDER', None)
+        self.env.pop('CODEX_STARTER_KIT_LIVE_INSPECT', None)
 
     def run_task(self, *args):
         return subprocess.run([str(self.bundle / 'tools/manual-task.sh'), *args],
@@ -229,9 +231,90 @@ class TaskTests(unittest.TestCase):
         self.assertIn('🤖 2 🚀 START Codex', result.stderr)
         self.assertIn('🤖 1 ❌ ERROR Codex', result.stdout)
         self.assertIn('SANDBOX_HANDOFF_EXIT_CODE=7', result.stdout)
+        self.assertNotIn('SANDBOX_HANDOFF_TMUX_SESSION', result.stdout)
         self.assertIn('a task\nsecond line\n', result.stdout)
         self.assertIn('ARGS:exec --skip-git-repo-check -', result.stdout)
         self.assertEqual(len(self.state()), 1)
+
+    def test_live_inspection_requires_tmux(self):
+        for name in ('bash', 'basename', 'dirname'):
+            (self.root / name).symlink_to(shutil.which(name))
+        codex = self.root / 'codex'
+        codex.write_text('#!/bin/bash\nexit 99\n')
+        codex.chmod(0o755)
+        result = subprocess.run(
+            [str(self.bundle / 'tools/run-codex.sh'), str(self.root), '--task', 'inspect'],
+            env=dict(self.env, PATH=str(self.root), CODEX_STARTER_KIT_LIVE_INSPECT='1'),
+            capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 127)
+        self.assertIn('CODEX_STARTER_KIT_LIVE_INSPECT=1 requires tmux in PATH', result.stderr)
+        self.assertNotIn('START Codex', result.stderr)
+
+    @unittest.skipUnless(shutil.which('tmux'), 'tmux is required for the live integration test')
+    def test_live_inspection_shows_json_progress_and_preserves_resume_metadata(self):
+        session = '01234567-89ab-4def-8123-0123456789ab'
+        codex = self.root / 'codex'
+        events = [
+            {'type': 'thread.started', 'thread_id': session},
+            {'type': 'item.started', 'item': {'type': 'command_execution', 'command': 'test command'}},
+            {'type': 'item.completed', 'item': {'type': 'command_execution', 'aggregated_output': 'live output'}},
+            {'type': 'turn.completed', 'usage': {'input_tokens': 10, 'output_tokens': 5}},
+        ]
+        codex.write_text(
+            '#!/bin/bash\n'
+            'if [[ $* == "exec resume --help" ]]; then echo "  --json"; exit; fi\n'
+            f'[[ $* == "exec resume --skip-git-repo-check --json {session} -" ]] || exit 99\n'
+            '[[ $(cat) == "resume task" ]] || exit 98\n'
+            "cat <<'EVENTS'\n" + '\n'.join(map(json.dumps, events)) + '\nEVENTS\n'
+            'echo "live stderr" >&2\n'
+            'while [[ ! -f release ]]; do sleep 0.05; done\n'
+            'exit 7\n')
+        codex.chmod(0o755)
+        env = dict(self.env, PATH=f'{self.root}:{self.env["PATH"]}',
+                   CODEX_STARTER_KIT_LIVE_INSPECT='1')
+        args = [str(self.bundle / 'tools/run-codex.sh'), str(self.root),
+                '--resume', session, '--task', 'resume task']
+        # Use files so a failure to publish the attachment command cannot block a read.
+        with (self.root / 'stdout').open('w+') as output, (self.root / 'stderr').open('w+') as errors:
+            with subprocess.Popen(args, env=env, stdout=output, stderr=errors) as runner:
+                try:
+                    deadline = time.monotonic() + 8
+                    while time.monotonic() < deadline:
+                        log = (self.root / 'stdout').read_text()
+                        match = re.search(r'tmux -S (\S+) attach -r -t (\S+)', log)
+                        if match:
+                            socket, tmux_session = match.groups()
+                            pane = subprocess.run(
+                                ['tmux', '-S', socket, 'capture-pane', '-p', '-t', tmux_session],
+                                capture_output=True, text=True, timeout=2)
+                            if 'live output' in pane.stdout and 'live stderr' in pane.stdout:
+                                break
+                        if runner.poll() is not None:
+                            break
+                        time.sleep(0.05)
+                    else:
+                        self.fail('Timed out waiting for live Codex output')
+                    self.assertIsNone(runner.poll(), (self.root / 'stderr').read_text())
+                    self.assertIn(f'SANDBOX_HANDOFF_TMUX_SESSION={tmux_session}', log)
+                    self.assertNotEqual(tmux_session, session)
+                    self.assertIn('test command', pane.stdout)
+                    self.assertEqual(len(self.state()), 1)
+                finally:
+                    (self.root / 'release').touch()
+                    try:
+                        runner.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        runner.terminate()
+                        runner.wait(timeout=5)
+        self.assertEqual(runner.returncode, 7)
+        log = (self.root / 'stdout').read_text()
+        self.assertIn(f'SANDBOX_HANDOFF_SESSION_ID={session}', log)
+        self.assertIn('SANDBOX_HANDOFF_EXIT_CODE=7', log)
+        self.assertIn('❌ ERROR Codex', log)
+        self.assertIn(f'tokens: 15 | session: {session}', log)
+        self.assertIn('START Codex', (self.root / 'stderr').read_text())
+        self.assertEqual(self.state(), {})
+        self.assertFalse(Path(socket).parent.exists())
 
     def test_runner_rejects_invalid_resume_arguments(self):
         session = '01234567-89ab-4def-8123-0123456789ab'

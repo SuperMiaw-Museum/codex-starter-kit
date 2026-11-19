@@ -46,9 +46,16 @@ codex_bin=$(type -P codex || true)
 codex_bin=$(cd -- "$(dirname -- "$codex_bin")" && printf '%s/%s' "$PWD" "$(basename -- "$codex_bin")") || exit 127
 export PATH="$(dirname -- "$codex_bin"):$PATH"
 cd -- "$project_dir" || exit 2
+if [[ ${CODEX_STARTER_KIT_LIVE_INSPECT:-0} == 1 ]]; then
+  command -v tmux >/dev/null || { echo 'CODEX_STARTER_KIT_LIVE_INSPECT=1 requires tmux in PATH' >&2; exit 127; }
+fi
 notify_on_exit() {
   local result=$?
   trap - EXIT HUP INT TERM
+  if [[ -n $inspect_dir ]]; then
+    tmux -S "$inspect_dir/socket" kill-server 2>/dev/null || true
+    rm -rf -- "$inspect_dir"
+  fi
   if [[ -n $token ]]; then
     local end_args=(end "$token" "$result")
     [[ -z $metadata ]] || end_args+=("$metadata")
@@ -60,6 +67,7 @@ notify_on_exit() {
 }
 token=
 metadata=
+inspect_dir=
 trap notify_on_exit EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
@@ -81,10 +89,46 @@ if [[ ${CODEX_STARTER_KIT_NOTIFY_METADATA:-1} == 1 ]]; then
 fi
 [[ -z $resume_id ]] || args+=("$resume_id")
 args+=(-)
-if [[ -n $metadata ]]; then
-  "$codex_bin" "${args[@]}" <<< "$task" |
-    python3 "$script_dir/codex_notice.py" "$metadata"
-  exit "${PIPESTATUS[0]}"
+run_codex() {
+  local parser=$1 metadata=$2 session_output=$3
+  shift 3
+  if [[ -n $metadata ]]; then
+    "$@" | python3 "$parser" "$metadata" "$session_output"
+    return "${PIPESTATUS[0]}"
+  fi
+  "$@"
+}
+if [[ ${CODEX_STARTER_KIT_LIVE_INSPECT:-0} == 1 ]]; then
+  inspect_dir=$(mktemp -d /tmp/codex-inspect.XXXXXXXX) || exit 1
+  inspect_session=${inspect_dir##*/}
+  inspect_session=${inspect_session/./-}
+  printf '%s\n' "$task" > "$inspect_dir/task" || exit 1
+  export -f run_codex
+  if ! tmux -S "$inspect_dir/socket" -f /dev/null new-session -d -s "$inspect_session" \
+      -x 120 -y 40 -c "$project_dir" bash -c '
+        inspect_dir=$1
+        shift
+        run_codex "$@" < "$inspect_dir/task"
+        result=$?
+        printf "%s\n" "$result" > "$inspect_dir/status"
+      ' bash "$inspect_dir" "$script_dir/codex_notice.py" "$metadata" \
+      "$inspect_dir/session-id" "$codex_bin" "${args[@]}"; then
+    echo 'Could not start the tmux inspection session' >&2
+    exit 1
+  fi
+  printf 'SANDBOX_HANDOFF_TMUX_SESSION=%s\n' "$inspect_session"
+  printf 'Read-only inspection: tmux -S %q attach -r -t %q\n' "$inspect_dir/socket" "$inspect_session"
+  while tmux -S "$inspect_dir/socket" has-session -t "$inspect_session" 2>/dev/null; do
+    sleep 0.2
+  done
+  if [[ -f $inspect_dir/session-id ]]; then
+    cat -- "$inspect_dir/session-id"
+  fi
+  if [[ ! -f $inspect_dir/status ]] || ! read -r result < "$inspect_dir/status"; then
+    echo 'The tmux inspection session ended before reporting a Codex exit code' >&2
+    exit 1
+  fi
+  exit "$result"
 fi
-"$codex_bin" "${args[@]}" <<< "$task"
+run_codex "$script_dir/codex_notice.py" "$metadata" '' "$codex_bin" "${args[@]}" <<< "$task"
 exit "$?"

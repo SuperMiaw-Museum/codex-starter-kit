@@ -95,6 +95,11 @@ The wrapper sends START and END automatically; do not add manual notifications o
 duplicates. Keep the remote session identifier for long commands; do not automatically
 poll or retrieve results. The human requests any follow-up.
 
+Set `CODEX_STARTER_KIT_LIVE_INSPECT=1` in the runner environment to inspect a
+mission on the VM. The runner prints a dedicated tmux session name and a
+read-only attachment command. See [Live inspection](notifications.md#live-inspection)
+for the session lifecycle and output.
+
 ## Manual tasks: send START and END
 
 For explicitly requested manual/non-Codex tasks, use the stateful helper:

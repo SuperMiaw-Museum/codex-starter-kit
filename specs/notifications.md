@@ -79,3 +79,19 @@ Run the offline checks with `python3 -m unittest discover -s tests -v`. They use
 private temporary registries and fake Codex commands, exercise concurrent mixed
 START/END delivery and failed END retries, and never broadcast to user terminals
 or operate the live service.
+
+## Live inspection
+
+With `CODEX_STARTER_KIT_LIVE_INSPECT=1`, each runner launches Codex in a
+dedicated tmux session and prints `SANDBOX_HANDOFF_TMUX_SESSION` and a
+`tmux -S … attach -r -t …` command on stdout. Run that command on the same
+host as the runner and use tmux copy mode for recent scrollback. The pane
+displays Codex stderr and, in JSON mode, agent messages, errors, and tool
+command and output events. The runner still reports START and END, the
+Codex exit code, and the Codex session UUID when captured. Use that UUID
+for `--resume`.
+
+The session uses tmux's default bounded scrollback and closes when the
+mission ends. The runner cleans up the dedicated server and temporary
+files on exit, including on handled signals. The pane has no interactive
+shell after Codex completes. tmux must be installed for this opt-in mode.

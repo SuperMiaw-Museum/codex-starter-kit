@@ -21,6 +21,7 @@ The Codex runner broadcasts START, END and ERROR notifications to SSH terminals 
 | --- | --- | --- |
 | `CODEX_STARTER_KIT_SHOW_FULL_PROMPT` | `0` | Set to `1` to include the complete delegated prompt in START notifications. Be mindful of sensitive task text. |
 | `CODEX_STARTER_KIT_LIMIT_REMINDER` | `0` | Set to `1` to show remaining 5-hour and weekly Codex quotas after END notifications, when a fresh local session snapshot is available. |
+| `CODEX_STARTER_KIT_LIVE_INSPECT` | `0` | Set to `1` to run each Codex handoff in a dedicated tmux session for read-only live inspection. |
 
 ### Persistent service (systemd)
 
@@ -30,11 +31,12 @@ Edit the service override:
 systemctl --user edit desktop-commander.service
 ```
 
-For example, to enable full prompts:
+For example, to enable full prompts and live inspection:
 
 ```ini
 [Service]
 Environment=CODEX_STARTER_KIT_SHOW_FULL_PROMPT=1
+Environment=CODEX_STARTER_KIT_LIVE_INSPECT=1
 ```
 
 Apply the changes:
@@ -44,7 +46,9 @@ systemctl --user daemon-reload
 systemctl --user restart desktop-commander.service
 ```
 
-Restarting the bridge disconnects its current ChatGPT session.
+Restarting the bridge disconnects its current ChatGPT session. Wait until no Codex mission is active before restarting. New handoffs inherit the environment from the restarted bridge.
+
+With live inspection enabled, the runner prints a `tmux -S ... attach -r -t ...` command. Run it from another terminal on the same host to observe the active mission without interacting with Codex. Detach with `Ctrl+B`, then `D`. The inspection session disappears when the mission finishes; it is not a persistent log. The tmux session identifier is distinct from the Codex session ID used by `--resume`.
 
 ### One-shot session
 
@@ -53,6 +57,16 @@ Export the variables in the terminal before starting the bridge, for example:
 ```bash
 CODEX_STARTER_KIT_SHOW_FULL_PROMPT=1 ./bootstrap/remote-control.sh --once
 ```
+
+## Resume a Codex session
+
+To continue a previous Codex task, use its session ID (shown in the END notification) with `--resume`:
+
+```bash
+./bootstrap/tools/run-codex.sh /path/to/project --resume SESSION_ID --task "Continue the previous task."
+```
+
+The session must already exist locally. An invalid or unavailable session fails rather than silently starting a new one. Omit `--resume` to start a fresh session.
 
 ## Project resources
 

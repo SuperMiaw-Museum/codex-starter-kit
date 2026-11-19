@@ -135,7 +135,7 @@ def quota_reminder():
     return tuple(lines)
 
 
-def capture(path):
+def capture(path, session_output=''):
     session = None
     with open(path, 'w', encoding='utf-8', buffering=1) as metadata:
         for event in events(sys.stdin.buffer):
@@ -150,17 +150,30 @@ def capture(path):
                     total = token_total(usage.get('input_tokens'), usage.get('output_tokens'))
                     if total is not None:
                         print(json.dumps({'tokens': total}), file=metadata, flush=True)
-            elif kind == 'item.completed':
+            elif kind in ('item.started', 'item.completed'):
                 item = event.get('item')
-                if isinstance(item, dict) and item.get('type') == 'agent_message':
-                    if isinstance(item.get('text'), str):
-                        print(item['text'], flush=True)
+                if not isinstance(item, dict):
+                    continue
+                if kind == 'item.completed' and item.get('type') == 'agent_message':
+                    output = item.get('text')
+                elif session_output and item.get('type') == 'command_execution':
+                    output = (item.get('command') if kind == 'item.started'
+                              else item.get('aggregated_output'))
+                    if not output:
+                        continue
+                else:
+                    continue
+                if isinstance(output, str):
+                    print(output, flush=True)
             elif kind in ('error', 'turn.failed'):
                 error = event if kind == 'error' else event.get('error')
                 if isinstance(error, dict) and isinstance(error.get('message'), str):
                     print(error['message'], file=sys.stderr, flush=True)
     if session is not None:
-        print(f'SANDBOX_HANDOFF_SESSION_ID={session}', flush=True)
+        marker = f'SANDBOX_HANDOFF_SESSION_ID={session}'
+        print(marker, flush=True)
+        if session_output:
+            Path(session_output).write_text(marker + '\n', encoding='utf-8')
 
 
 def session_model(session):
@@ -210,4 +223,4 @@ def notice_fields(path):
 
 
 if __name__ == '__main__':
-    capture(sys.argv[1])
+    capture(*sys.argv[1:])
