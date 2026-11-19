@@ -67,6 +67,14 @@ adds input and output from the completed turn, with cached input already
 included. The model comes from the matching local session record. Failed or
 interrupted runs can have partial metadata. Unavailable fields are omitted.
 
+Set `CODEX_STARTER_KIT_LIMIT_REMINDER=1` to append two quota lines to Codex
+END and ERROR notices on stdout and the same terminals. Only the literal
+value `1` enables the reminder. It uses the newest valid local token-count
+snapshot under `~/.codex/sessions/` that is at most five hours old and has
+future resets for both the 5-hour and weekly windows. Countdown values round
+up to whole minutes. If the snapshot is unavailable or the scan exceeds its
+one-second budget, delivery continues without the block.
+
 Run the offline checks with `python3 -m unittest discover -s tests -v`. They use
 private temporary registries and fake Codex commands, exercise concurrent mixed
 START/END delivery and failed END retries, and never broadcast to user terminals

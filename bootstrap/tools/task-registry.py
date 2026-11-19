@@ -95,12 +95,17 @@ def save(state):
             os.unlink(name)
 
 
-def deliver(message, phase, code, stream, full_prompt=None):
+def deliver(message, phase, code, stream, full_prompt=None, reminder=()):
     # Broken stdout or an inaccessible terminal must not roll back a committed END.
     try:
         print(message, file=stream, flush=True)
     except OSError:
         pass
+    if reminder:
+        try:
+            print('\n'.join(reminder), file=stream, flush=True)
+        except (OSError, UnicodeError):
+            pass
     color = '36' if phase == 'START' else '32' if code == 0 else '31'
     bell = '\a' if phase == 'END' else ''
     payload = f'\r\n{bell}\x1b[1;{color}m{message}\x1b[0m\r\n'.encode()
@@ -108,6 +113,8 @@ def deliver(message, phase, code, stream, full_prompt=None):
         payload += full_prompt.encode(errors='surrogateescape')
         if not payload.endswith(b'\n'):
             payload += b'\r\n'
+    if reminder:
+        payload += ('\r\n'.join(reminder) + '\r\n').encode()
     try:
         entries = os.listdir('/dev/pts')
     except OSError:
@@ -220,8 +227,17 @@ def main(args):
             save(state)
             message = (f"[{time.strftime('%H:%M:%S')}] 🤖 {len(state)} {marker} "
                        f"{task['mode']} [{task['project']}]" + suffix)
+            reminder = ()
+            if (command == 'end' and task['mode'] == 'Codex'
+                    and os.environ.get('CODEX_STARTER_KIT_LIMIT_REMINDER') == '1'):
+                try:
+                    from codex_notice import quota_reminder
+                    reminder = quota_reminder()
+                except Exception:
+                    # Optional session data must never prevent delivery of the END notice.
+                    pass
             deliver(message, command.upper(), 0 if command == 'start' else code,
-                    sys.stderr if command == 'start' else sys.stdout, full_prompt)
+                    sys.stderr if command == 'start' else sys.stdout, full_prompt, reminder)
             if command == 'start':
                 print(token, flush=True)
         finally:

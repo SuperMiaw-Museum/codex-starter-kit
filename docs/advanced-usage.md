@@ -20,6 +20,7 @@ The Codex runner broadcasts START, END and ERROR notifications to SSH terminals 
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `CODEX_STARTER_KIT_SHOW_FULL_PROMPT` | `0` | Set to `1` to include the complete delegated prompt in START notifications. Be mindful of sensitive task text. |
+| `CODEX_STARTER_KIT_LIMIT_REMINDER` | `0` | Set to `1` to show remaining 5-hour and weekly Codex quotas after END notifications, when a fresh local session snapshot is available. |
 
 ### Persistent service (systemd)
 

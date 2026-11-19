@@ -36,6 +36,7 @@ class TaskTests(unittest.TestCase):
         self.env = dict(os.environ, HOME=str(self.root), NVM_DIR=str(self.root / 'nvm'))
         self.env.pop('CODEX_STARTER_KIT_SHOW_FULL_PROMPT', None)
         self.env.pop('CODEX_STARTER_KIT_NOTIFY_METADATA', None)
+        self.env.pop('CODEX_STARTER_KIT_LIMIT_REMINDER', None)
 
     def run_task(self, *args):
         return subprocess.run([str(self.bundle / 'tools/manual-task.sh'), *args],
@@ -232,6 +233,78 @@ class TaskTests(unittest.TestCase):
         self.assertIn('ARGS:exec --skip-git-repo-check -', result.stdout)
         self.assertEqual(len(self.state()), 1)
 
+    def test_runner_rejects_invalid_resume_arguments(self):
+        session = '01234567-89ab-4def-8123-0123456789ab'
+        runner = self.bundle / 'tools/run-codex.sh'
+        for args in (('--resume',), ('--resume', session), ('--resume', session, '--task'),
+                     ('--resume', '--last', '--task', 'text'),
+                     ('--resume', 'invalid-id', '--task', 'text'),
+                     ('--resume', session, '--resume', session, '--task', 'text'),
+                     ('--resume', session, '--task', 'text', 'extra'),
+                     ('--resume', session, '--task', '')):
+            with self.subTest(args=args):
+                result = subprocess.run([str(runner), str(self.root), *args],
+                                        env=self.env, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertNotIn('START Codex', result.stderr)
+                self.assertNotIn('invalid-id', result.stderr)
+                self.assertEqual(result.stdout, '')
+        self.assertFalse(self.registry.exists())
+
+    def test_runner_resume_uses_stdin_and_captures_actual_session(self):
+        session = '01234567-89ab-4def-8123-0123456789ab'
+        task = '- continue this task\nsecond line'
+        task_file = self.root / 'task.txt'
+        task_file.write_text(task + '\n')
+        codex = self.root / 'codex'
+        codex.write_text(
+            '#!/bin/bash\n'
+            'if [[ $* == "exec resume --help" ]]; then echo "  --json"; exit; fi\n'
+            'printf "%s\\n" "$*" >> "$HOME/invocations"\n'
+            'cat > "$HOME/prompt"\n'
+            'if [[ $CODEX_RESULT != 0 ]]; then\n'
+            """  echo '{"type":"error","message":"Session unavailable"}'\n"""
+            '  exit "$CODEX_RESULT"\n'
+            'fi\n'
+            """echo '{"type":"thread.started","thread_id":"invalid"}'\n"""
+            """printf '{"type":"thread.started","thread_id":"%s"}\\n' "$ACTUAL_SESSION"\n"""
+        )
+        codex.chmod(0o755)
+        self.env.update(PATH=f'{self.root}:{self.env["PATH"]}', ACTUAL_SESSION=session)
+        runner = self.bundle / 'tools/run-codex.sh'
+        invocations = self.root / 'invocations'
+        # Codex accepts uppercase UUID input but emits the canonical session ID.
+        for code, task_args in ((0, ['--task', task]), (0, [str(task_file)]),
+                                (9, ['--task', task])):
+            with self.subTest(code=code, task_args=task_args):
+                invocations.write_text('')
+                result = subprocess.run(
+                    [str(runner), str(self.root), '--resume', session.upper(), *task_args],
+                    env=dict(self.env, CODEX_RESULT=str(code)),
+                    capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertEqual(invocations.read_text(),
+                                 f'exec resume --skip-git-repo-check --json {session.upper()} -\n')
+                self.assertEqual((self.root / 'prompt').read_text(), task + '\n')
+                self.assertIn(f'SANDBOX_HANDOFF_EXIT_CODE={code}', result.stdout)
+                if code:
+                    self.assertIn('Session unavailable', result.stderr)
+                    self.assertIn('ERROR Codex', result.stdout)
+                    self.assertNotIn('SANDBOX_HANDOFF_SESSION_ID=', result.stdout)
+                else:
+                    self.assertIn(f'SANDBOX_HANDOFF_SESSION_ID={session}\n', result.stdout)
+                    self.assertIn(f' | session: {session}\n', result.stdout)
+                self.assertEqual(self.state(), {})
+
+        # Session recovery uses the task output even when the registry is unavailable.
+        (self.registry / 'tasks.json').write_text('corrupt')
+        result = subprocess.run(
+            [str(runner), str(self.root), '--resume', session, str(task_file)],
+            env=dict(self.env, CODEX_RESULT='0'), capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout,
+                         f'SANDBOX_HANDOFF_SESSION_ID={session}\nSANDBOX_HANDOFF_EXIT_CODE=0\n')
+
     def test_runner_optional_full_prompt(self):
         master, slave = pty.openpty()
         self.addCleanup(os.close, master)
@@ -346,6 +419,8 @@ class TaskTests(unittest.TestCase):
         codex = self.root / 'codex'
         self.env.update(PATH=f'{self.root}:{self.env["PATH"]}', CODEX_HOME=str(home))
         task = 'first line ' + 'x' * 130 + '\nPRIVATE FULL PROMPT'
+        self.write_quota_session('recent.jsonl', [self.quota_event(
+            datetime.now(timezone.utc) - timedelta(seconds=5))])
         for setting, code in itertools.product(('0', '1'), (0, 7, 143, 8)):
             with self.subTest(setting=setting, code=code):
                 events = [
@@ -368,9 +443,12 @@ class TaskTests(unittest.TestCase):
                     + '\n'.join(map(json.dumps, events)) + '\nEVENTS\n'
                     + ('kill -TERM "$PPID"\n' if code == 143 else f'exit {code}\n'))
                 codex.chmod(0o755)
+                env = dict(self.env, CODEX_STARTER_KIT_SHOW_FULL_PROMPT=setting)
+                if setting == '1':
+                    env['CODEX_STARTER_KIT_LIMIT_REMINDER'] = '1'
                 result = subprocess.run(
                     [str(self.bundle / 'tools/run-codex.sh'), str(self.root), '--task', task],
-                    env=dict(self.env, CODEX_STARTER_KIT_SHOW_FULL_PROMPT=setting),
+                    env=env,
                     capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode, code, result.stderr)
                 self.assertIn('START Codex', result.stderr)
@@ -388,12 +466,87 @@ class TaskTests(unittest.TestCase):
                     suffix = f' | model: test-model{tokens} | session: {session}'
                 notice = (rf'\[\d{{2}}:\d{{2}}:\d{{2}}\] 🤖 0 {marker} Codex '
                           rf'\[{re.escape(self.root.name)}\] duration: \d+s{re.escape(suffix)}')
+                reminder = []
+                if setting == '1':
+                    reminder = [r'⏱️ Codex 5-hour: 75% remaining · resets in (?:1h|\d+m)',
+                                r'📅 Codex weekly: 50% remaining · resets in (?:2d|1d 23h \d+m)']
                 self.assertRegex(
                     os.read(master, 4096).decode(),
-                    rf'^{re.escape(start)}\r\n\a\x1b\[1;{color}m{notice}\x1b\[0m\r\n\Z')
+                    rf'^{re.escape(start)}\r\n\a\x1b\[1;{color}m{notice}\x1b\[0m\r\n'
+                    + ''.join(line + r'\r\n' for line in reminder) + r'\Z')
                 self.assertRegex(result.stdout,
-                                 rf'^Agent output\n{notice}\nSANDBOX_HANDOFF_EXIT_CODE={code}\n\Z')
+                                 r'^Agent output\n'
+                                 + (f'SANDBOX_HANDOFF_SESSION_ID={session}\n' if code != 8 else '')
+                                 + rf'{notice}\n'
+                                 + ''.join(line + r'\n' for line in reminder)
+                                 + rf'SANDBOX_HANDOFF_EXIT_CODE={code}\n\Z')
                 self.assertEqual(self.state(), {})
+
+    def quota_event(self, stamp, used=25):
+        return {
+            'type': 'event_msg', 'timestamp': stamp.isoformat().replace('+00:00', 'Z'),
+            'payload': {'type': 'token_count', 'rate_limits': {
+                'primary': {'used_percent': used, 'window_minutes': 300,
+                            'resets_at': stamp.timestamp() + 3600},
+                'secondary': {'used_percent': 50, 'window_minutes': 10080,
+                              'resets_at': stamp.timestamp() + 172800},
+            }},
+        }
+
+    def write_quota_session(self, name, events):
+        path = self.root / '.codex/sessions' / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('malformed JSON\n' + '\n'.join(map(json.dumps, events)) + '\n')
+        return path
+
+    def test_quota_reminder_requires_literal_opt_in_and_valid_snapshot(self):
+        now = datetime.now(timezone.utc)
+        expired = self.quota_event(now - timedelta(seconds=1))
+        expired['payload']['rate_limits']['primary']['resets_at'] = now.timestamp() - 2
+        bad_reset = self.quota_event(now - timedelta(seconds=2))
+        bad_reset['payload']['rate_limits']['secondary']['resets_at'] *= 1000
+        self.write_quota_session('nested/older.jsonl', [
+            self.quota_event(now - timedelta(minutes=1), 80),
+            self.quota_event(now - timedelta(hours=6)),
+        ])
+        self.write_quota_session('newer.jsonl', [
+            self.quota_event(now - timedelta(seconds=10), 12.5),
+            self.quota_event(now + timedelta(hours=1)), expired, bad_reset,
+            self.quota_event(now - timedelta(seconds=3), True),
+            self.quota_event(now - timedelta(seconds=4), float('nan')),
+        ])
+        outside = self.root / 'outside.jsonl'
+        outside.write_text(json.dumps(self.quota_event(now - timedelta(seconds=1), 99)))
+        sessions = self.root / '.codex/sessions'
+        (sessions / 'link.jsonl').symlink_to(outside)
+        os.mkfifo(sessions / 'pipe.jsonl')
+
+        def finish_codex():
+            script = str(self.bundle / 'tools/notify-task-done.sh')
+            start = subprocess.run([script, 'start', 'p', 'quota check', str(os.getpid())],
+                                   env=self.env, text=True, capture_output=True, timeout=5)
+            self.assertEqual(start.returncode, 0, start.stderr)
+            self.assertRegex(start.stderr, r'START Codex \[p\] quota check\n\Z')
+            result = subprocess.run([script, 'end', start.stdout.strip(), '0'],
+                                    env=self.env, text=True, capture_output=True, timeout=5)
+            self.assertEqual((result.returncode, result.stderr), (0, ''))
+            self.assertEqual(self.state(), {})
+            return result.stdout.splitlines()
+
+        for setting in (None, '', '0', 'true', '01', '1'):
+            with self.subTest(setting=setting):
+                if setting is not None:
+                    self.env['CODEX_STARTER_KIT_LIMIT_REMINDER'] = setting
+                lines = finish_codex()
+                self.assertRegex(lines[0], r'END Codex \[p\] duration: \d+s$')
+                self.assertEqual(len(lines), 3 if setting == '1' else 1)
+                if setting == '1':
+                    self.assertIn('87.5% remaining', lines[1])
+
+        manual = self.run_task('end', self.start().stdout.strip(), '0')
+        self.assertRegex(manual.stdout, r'END Manual \[project\] \(\d+s\)\n\Z')
+        sessions.rename(sessions.with_name('old-sessions'))
+        self.assertEqual(len(finish_codex()), 1)
 
     def test_runner_metadata_without_json_support(self):
         codex = self.root / 'codex'
