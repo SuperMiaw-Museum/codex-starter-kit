@@ -1,0 +1,1 @@
+- Update the quota reminder row in `docs/advanced-usage.md` to describe snapshot age, stale and expired status, and the unavailable message.

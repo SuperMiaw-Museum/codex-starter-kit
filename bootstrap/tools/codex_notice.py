@@ -7,11 +7,20 @@ from pathlib import Path
 import re
 import stat
 import sys
+import tempfile
 import time
 
 
 QUOTA_WINDOWS = (('primary', 300, '⏱️ Codex 5-hour'), ('secondary', 10080, '📅 Codex weekly'))
-MAX_SESSION_LINE = 1024 * 1024
+QUOTA_STALE_AFTER = 15 * 60
+QUOTA_TAIL_BYTES = 256 * 1024
+QUOTA_MAX_DIRECTORIES = 24
+QUOTA_MAX_ENTRIES = 1024
+QUOTA_MAX_FILES = 24
+QUOTA_CACHE_BYTES = 4096
+QUOTA_UNAVAILABLE = ('Codex usage: unavailable',)
+DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 
 
 def session_id(value):
@@ -38,17 +47,19 @@ def events(stream):
             yield event
 
 
-def quota_events(stream, deadline):
-    oversized = False
-    while time.monotonic() < deadline:
-        line = stream.readline(MAX_SESSION_LINE + 1)
-        if not line:
-            return
-        skip = oversized or len(line) > MAX_SESSION_LINE
-        oversized = not line.endswith(b'\n')
-        if not skip:
-            yield from events((line,))
-    raise TimeoutError
+def validated_quota(stamp, windows, now):
+    if (type(stamp) not in (int, float) or not 0 < stamp <= now
+            or not isinstance(windows, list) or len(windows) != len(QUOTA_WINDOWS)):
+        return None
+    for (_, minutes, _), window in zip(QUOTA_WINDOWS, windows):
+        if not isinstance(window, list) or len(window) != 2:
+            return None
+        used, reset = window
+        if (type(used) not in (int, float) or not 0 <= used <= 100
+                or type(reset) not in (int, float)
+                or not stamp < reset <= stamp + minutes * 60):
+            return None
+    return stamp, windows
 
 
 def quota_snapshot(event, now):
@@ -57,7 +68,8 @@ def quota_snapshot(event, now):
             or payload.get('type') != 'token_count'):
         return None
     raw_timestamp = event.get('timestamp')
-    if not isinstance(raw_timestamp, str):
+    limits = payload.get('rate_limits')
+    if not isinstance(raw_timestamp, str) or not isinstance(limits, dict):
         return None
     try:
         timestamp = datetime.fromisoformat(raw_timestamp.replace('Z', '+00:00'))
@@ -66,70 +78,162 @@ def quota_snapshot(event, now):
         stamp = timestamp.timestamp()
     except (ValueError, OverflowError, OSError):
         return None
-    limits = payload.get('rate_limits')
-    if not now - 300 * 60 <= stamp <= now or not isinstance(limits, dict):
-        return None
     windows = []
     for key, minutes, _ in QUOTA_WINDOWS:
         window = limits.get(key)
         if not isinstance(window, dict) or window.get('window_minutes') != minutes:
             return None
-        used, reset = window.get('used_percent'), window.get('resets_at')
-        if (type(used) not in (int, float) or not 0 <= used <= 100
-                or type(reset) not in (int, float)
-                or not now < reset <= stamp + minutes * 60):
-            return None
-        windows.append((used, reset))
-    return stamp, windows
+        windows.append([window.get('used_percent'), window.get('resets_at')])
+    return validated_quota(stamp, windows, now)
+
+
+def quota_tail(directory, name):
+    with os.fdopen(os.open(name, FILE_FLAGS, dir_fd=directory), 'rb') as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            return []
+        offset = max(0, info.st_size - QUOTA_TAIL_BYTES)
+        starts_on_boundary = True
+        if offset:
+            stream.seek(offset - 1)
+            starts_on_boundary = stream.read(1) == b'\n'
+        lines = stream.read(QUOTA_TAIL_BYTES).split(b'\n')
+        # Drop any partial record at the start and any unfinished append at EOF.
+        return lines[0 if starts_on_boundary else 1:-1]
 
 
 def newest_quota_snapshot(home, now, deadline):
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    fd = os.open(home / '.codex', flags)
     newest = None
-    try:
-        for _, _, names, directory in os.fwalk('sessions', dir_fd=fd):
-            if time.monotonic() >= deadline:
-                raise TimeoutError
-            for name in names:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError
-                if not name.endswith('.jsonl'):
-                    continue
-                try:
-                    info = os.stat(name, dir_fd=directory, follow_symlinks=False)
-                    if not stat.S_ISREG(info.st_mode):
+    directories_left = QUOTA_MAX_DIRECTORIES
+    entries_left = QUOTA_MAX_ENTRIES
+    files_left = QUOTA_MAX_FILES
+
+    def scan(parent, name):
+        nonlocal newest, directories_left, entries_left, files_left
+        if not directories_left or not files_left or time.monotonic() >= deadline:
+            return
+        directories_left -= 1
+        try:
+            directory = os.open(name, DIRECTORY_FLAGS, dir_fd=parent)
+        except OSError:
+            return
+        try:
+            folders, files = [], []
+            with os.scandir(directory) as entries:
+                while entries_left and time.monotonic() < deadline:
+                    entry = next(entries, None)
+                    if entry is None:
+                        break
+                    entries_left -= 1
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            folders.append(entry.name)
+                        elif entry.name.endswith('.jsonl') and entry.is_file(follow_symlinks=False):
+                            files.append((entry.stat(follow_symlinks=False).st_mtime_ns, entry.name))
+                    except OSError:
                         continue
-                    with os.fdopen(os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
-                                           dir_fd=directory), 'rb') as stream:
-                        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            for _, filename in sorted(files, reverse=True):
+                if not files_left or time.monotonic() >= deadline:
+                    return
+                files_left -= 1
+                try:
+                    for line in reversed(quota_tail(directory, filename)):
+                        if time.monotonic() >= deadline:
+                            return
+                        if b'token_count' not in line:
                             continue
-                        for event in quota_events(stream, deadline):
+                        for event in events((line,)):
                             snapshot = quota_snapshot(event, now)
-                            if snapshot and (newest is None or snapshot[0] >= newest[0]):
+                            if snapshot and (newest is None or snapshot[0] > newest[0]):
                                 newest = snapshot
-                except TimeoutError:
-                    raise
                 except OSError:
                     continue
+            for folder in sorted(folders, reverse=True):
+                if not entries_left or not directories_left or not files_left:
+                    break
+                scan(directory, folder)
+        except OSError:
+            return
+        finally:
+            os.close(directory)
+
+    try:
+        fd = os.open(home, DIRECTORY_FLAGS)
+    except OSError:
+        return None
+    try:
+        scan(fd, 'sessions')
     finally:
         os.close(fd)
     return newest
 
 
-def quota_reminder():
-    snapshot = newest_quota_snapshot(Path.home(), time.time(), time.monotonic() + 1)
+def read_quota_cache(cache, home, now):
+    try:
+        with os.fdopen(os.open(cache, FILE_FLAGS), 'rb') as stream:
+            info = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                    or info.st_mode & 0o077 or info.st_size > QUOTA_CACHE_BYTES):
+                return None
+            record = json.loads(stream.read(QUOTA_CACHE_BYTES + 1))
+        if isinstance(record, dict) and record.get('home') == str(home):
+            return validated_quota(record.get('stamp'), record.get('windows'), now)
+    except (OSError, ValueError, RecursionError):
+        pass
+    return None
+
+
+def write_quota_cache(cache, home, snapshot):
+    # The caller holds the registry lock. Atomic replacement also protects readers
+    # from partial writes if an END process is interrupted.
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', dir=cache.parent, prefix='.quota-',
+                                         delete=False, encoding='utf-8') as stream:
+            temporary = Path(stream.name)
+            try:
+                json.dump(dict(home=str(home), stamp=snapshot[0], windows=snapshot[1]), stream)
+                stream.close()
+                temporary.replace(cache)
+            finally:
+                temporary.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def quota_duration(seconds):
+    hours, minutes = divmod(seconds // 60, 60)
+    days, hours = divmod(hours, 24)
+    parts = ((days, 'd'), (hours, 'h'), (minutes, 'm'))
+    return ' '.join(f'{amount}{unit}' for amount, unit in parts if amount) or f'{seconds}s'
+
+
+def quota_reminder(home, cache):
     now = time.time()
-    if snapshot is None or not now - 300 * 60 <= snapshot[0] <= now:
-        return ()
-    lines = []
-    for (_, _, label), (used, reset) in zip(QUOTA_WINDOWS, snapshot[1]):
-        if reset <= now:
-            return ()
-        hours, minutes = divmod(math.ceil((reset - now) / 60), 60)
-        days, hours = divmod(hours, 24)
-        countdown = ' '.join(f'{amount}{unit}' for amount, unit in
-                             ((days, 'd'), (hours, 'h'), (minutes, 'm')) if amount)
+    cached = read_quota_cache(cache, home, now)
+    found = newest_quota_snapshot(home, now, time.monotonic() + 1)
+    now = time.time()
+    # Recheck after I/O in case a reset passed or the wall clock moved back.
+    cached = cached and validated_quota(*cached, now)
+    found = found and validated_quota(*found, now)
+    snapshot = cached
+    if found and (cached is None or found[0] > cached[0]):
+        snapshot = found
+        write_quota_cache(cache, home, found)
+    if snapshot is None:
+        return QUOTA_UNAVAILABLE
+    now = time.time()
+    stamp, windows = snapshot
+    if stamp > now:
+        return QUOTA_UNAVAILABLE
+    age = now - stamp
+    heading = f'Usage snapshot: {quota_duration(int(age))} ago'
+    if any(reset <= now for _, reset in windows):
+        return (heading + ' (expired)',)
+    if age >= QUOTA_STALE_AFTER:
+        return (heading + ' (stale)',)
+    lines = [heading]
+    for (_, _, label), (used, reset) in zip(QUOTA_WINDOWS, windows):
+        countdown = quota_duration(math.ceil((reset - now) / 60) * 60)
         remaining = f'{100 - used:.2f}'.rstrip('0').rstrip('.')
         lines.append(f'{label}: {remaining}% remaining · resets in {countdown}')
     return tuple(lines)

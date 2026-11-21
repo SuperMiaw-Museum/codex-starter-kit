@@ -188,6 +188,13 @@ def main(args):
     if metadata:
         from codex_notice import notice_fields
         fields = notice_fields(metadata)
+    quota_enabled = command == 'end' and os.environ.get('CODEX_STARTER_KIT_LIMIT_REMINDER') == '1'
+    quota_home = None
+    if quota_enabled:
+        try:
+            quota_home = Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex').expanduser().absolute()
+        except (OSError, RuntimeError, ValueError):
+            pass
     if command == 'status' and not ROOT.exists() and not ROOT.is_symlink():
         print('🤖 0 active tasks')
         return 0
@@ -248,14 +255,15 @@ def main(args):
             message = (f"[{time.strftime('%H:%M:%S')}] 🤖 {len(state)} {marker} "
                        f"{task['mode']} [{task['project']}]" + suffix)
             reminder = ()
-            if (command == 'end' and task['mode'] == 'Codex'
-                    and os.environ.get('CODEX_STARTER_KIT_LIMIT_REMINDER') == '1'):
-                try:
-                    from codex_notice import quota_reminder
-                    reminder = quota_reminder()
-                except Exception:
-                    # Optional session data must never prevent delivery of the END notice.
-                    pass
+            if quota_enabled and task['mode'] == 'Codex':
+                reminder = ('Codex usage: unavailable',)
+                if quota_home is not None:
+                    try:
+                        from codex_notice import quota_reminder
+                        reminder = quota_reminder(quota_home, Path('quota.json'))
+                    except Exception:
+                        # Optional session data must never prevent END delivery.
+                        pass
             deliver(message, command.upper(), 0 if command == 'start' else code,
                     sys.stderr if command == 'start' else sys.stdout, full_prompt, reminder, inspect_command)
             if command == 'start':

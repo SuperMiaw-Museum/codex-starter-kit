@@ -71,13 +71,31 @@ adds input and output from the completed turn, with cached input already
 included. The model comes from the matching local session record. Failed or
 interrupted runs can have partial metadata. Unavailable fields are omitted.
 
-Set `CODEX_STARTER_KIT_LIMIT_REMINDER=1` to append two quota lines to Codex
+Set `CODEX_STARTER_KIT_LIMIT_REMINDER=1` to append a quota reminder to Codex
 END and ERROR notices on stdout and the same terminals. Only the literal
-value `1` enables the reminder. It uses the newest valid local token-count
-snapshot under `~/.codex/sessions/` that is at most five hours old and has
-future resets for both the 5-hour and weekly windows. Countdown values round
-up to whole minutes. If the snapshot is unavailable or the scan exceeds its
-one-second budget, delivery continues without the block.
+value `1` enables it. The reminder shows the age of the newest trustworthy
+snapshot found, for example `Usage snapshot: 2m ago`. Snapshots at least
+15 minutes old are marked stale. A snapshot is marked expired as soon as
+either quota window has reset. Stale and expired reminders show only the
+snapshot age and status. Fresh reminders show both remaining percentages and
+reset countdowns rounded up to whole minutes. If neither lookup nor cache
+yields a trustworthy snapshot, the notice shows `Codex usage: unavailable`.
+
+Lookup checks bounded tails of local session logs in `$CODEX_HOME/sessions/`
+(default `~/.codex/sessions/`), favoring recent directories and recently
+written files. It checks at most 24 directories, 1,024 directory entries,
+and 24 file tails of up to 256 KiB each, with a one-second scan budget.
+It accepts complete token-count records with a nonfuture timestamp, both
+expected window lengths, valid percentages, and resets within the respective
+windows measured from the snapshot timestamp. A held-over snapshot is
+revalidated every time it is displayed.
+
+The private task registry keeps one atomically replaced cache entry scoped
+to the last Codex home recorded there. Cache writes share the existing
+registry lock, and malformed or unsafe cache files are ignored. Bounded
+lookup can miss snapshots in older directories, before the file tails, or
+outside the scan budget. Quota lookup and cache failures are best effort and
+do not change task tracking or notification delivery.
 
 Run the offline checks with `python3 -m unittest discover -s tests -v`. They use
 private temporary registries and fake Codex commands, exercise concurrent mixed

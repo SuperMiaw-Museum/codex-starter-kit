@@ -35,6 +35,7 @@ class TaskTests(unittest.TestCase):
         code = code.replace("entries = os.listdir('/dev/pts')", 'entries = []')
         path.write_text(code)
         self.env = dict(os.environ, HOME=str(self.root), NVM_DIR=str(self.root / 'nvm'))
+        self.env.pop('CODEX_HOME', None)
         self.env.pop('CODEX_STARTER_KIT_SHOW_FULL_PROMPT', None)
         self.env.pop('CODEX_STARTER_KIT_NOTIFY_METADATA', None)
         self.env.pop('CODEX_STARTER_KIT_LIMIT_REMINDER', None)
@@ -597,7 +598,8 @@ class TaskTests(unittest.TestCase):
                           rf'{re.escape(suffix)}')
                 reminder = []
                 if setting == '1':
-                    reminder = [r'⏱️ Codex 5-hour: 75% remaining · resets in (?:1h|\d+m)',
+                    reminder = [r'Usage snapshot: \d+s ago',
+                                r'⏱️ Codex 5-hour: 75% remaining · resets in (?:1h|\d+m)',
                                 r'📅 Codex weekly: 50% remaining · resets in (?:2d|1d 23h \d+m)']
                 self.assertRegex(
                     os.read(master, 4096).decode(),
@@ -623,7 +625,8 @@ class TaskTests(unittest.TestCase):
         }
 
     def write_quota_session(self, name, events):
-        path = self.root / '.codex/sessions' / name
+        home = Path(self.env.get('CODEX_HOME', self.root / '.codex'))
+        path = home / 'sessions' / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('malformed JSON\n' + '\n'.join(map(json.dumps, events)) + '\n')
         return path
@@ -668,14 +671,92 @@ class TaskTests(unittest.TestCase):
                     self.env['CODEX_STARTER_KIT_LIMIT_REMINDER'] = setting
                 lines = finish_codex()
                 self.assertRegex(lines[0], r'END Codex \[p\] duration: \d+s \| task: [0-9a-f]{12}$')
-                self.assertEqual(len(lines), 3 if setting == '1' else 1)
+                self.assertEqual(len(lines), 4 if setting == '1' else 1)
                 if setting == '1':
-                    self.assertIn('87.5% remaining', lines[1])
+                    self.assertRegex(lines[1], r'Usage snapshot: \d+s ago')
+                    self.assertIn('87.5% remaining', lines[2])
 
         manual = self.run_task('end', self.start().stdout.strip(), '0')
         self.assertRegex(manual.stdout, r'END Manual \[project\] \(\d+s\)\n\Z')
         sessions.rename(sessions.with_name('old-sessions'))
-        self.assertEqual(len(finish_codex()), 1)
+        self.assertIn('87.5% remaining', finish_codex()[2])
+        self.env['CODEX_HOME'] = str(self.root / 'other-codex-home')
+        self.assertEqual(finish_codex()[1:], ['Codex usage: unavailable'])
+
+    def quota_module(self):
+        spec = importlib.util.spec_from_file_location('codex_notice', SOURCE / 'tools/codex_notice.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_quota_snapshot_ages_and_expires_across_cache_reads(self):
+        module = self.quota_module()
+        stamp = datetime(2026, 11, 21, tzinfo=timezone.utc)
+        epoch = stamp.timestamp()
+        path = self.write_quota_session('2026/11/21/rollout.jsonl', [self.quota_event(stamp)])
+        cache = self.root / 'quota.json'
+        home = self.root / '.codex'
+
+        def reminder(offset):
+            with patch.object(module.time, 'time', return_value=epoch + offset):
+                return module.quota_reminder(home, cache)
+
+        fresh = reminder(120)
+        self.assertEqual(fresh[0], 'Usage snapshot: 2m ago')
+        self.assertIn('75% remaining · resets in 58m', fresh[1])
+        self.assertEqual(cache.stat().st_mode & 0o777, 0o600)
+        path.unlink()
+        self.write_quota_session('2026/11/21/older.jsonl', [
+            self.quota_event(stamp - timedelta(seconds=30), 90)])
+        self.assertEqual(reminder(120), fresh)
+        with patch.object(module.time, 'monotonic', side_effect=itertools.count(step=2)):
+            self.assertEqual(reminder(120), fresh)
+        self.assertEqual(reminder(900), ('Usage snapshot: 15m ago (stale)',))
+        self.assertEqual(reminder(3600), ('Usage snapshot: 1h ago (expired)',))
+        self.assertEqual(reminder(-31), ('Codex usage: unavailable',))
+        (path.parent / 'older.jsonl').unlink()
+        cache.write_text('{' + 'x' * 4096)
+        self.assertEqual(reminder(120), ('Codex usage: unavailable',))
+
+    def test_concurrent_codex_ends_share_quota_cache(self):
+        self.env['CODEX_STARTER_KIT_LIMIT_REMINDER'] = '1'
+        self.write_quota_session('rollout.jsonl', [
+            self.quota_event(datetime.now(timezone.utc) - timedelta(seconds=5))])
+        script = str(self.bundle / 'tools/notify-task-done.sh')
+        starts = [subprocess.run([script, 'start', 'p', 'quota check', str(os.getpid())],
+                                 env=self.env, text=True, capture_output=True, timeout=5)
+                  for _ in range(4)]
+        self.assertTrue(all(result.returncode == 0 for result in starts))
+
+        def finish(start):
+            return subprocess.run([script, 'end', start.stdout.strip(), '0'],
+                                  env=self.env, text=True, capture_output=True, timeout=5)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(finish, starts))
+        self.assertTrue(all(result.returncode == 0 for result in results))
+        self.assertTrue(all('75% remaining' in result.stdout for result in results))
+        self.assertEqual(self.state(), {})
+        self.assertEqual(json.loads((self.registry / 'quota.json').read_text())['windows'][0][0], 25)
+        self.assertEqual(list(self.registry.glob('.quota-*')), [])
+
+    def test_quota_lookup_reads_complete_records_in_bounded_tails(self):
+        module = self.quota_module()
+        now = datetime.now(timezone.utc)
+        path = self.write_quota_session('2026/11/21/rollout.jsonl', [
+            self.quota_event(now - timedelta(seconds=30), 90)])
+        with path.open('a') as stream:
+            stream.write('x' * (256 * 1024) + '\n')
+            stream.write(json.dumps(self.quota_event(now - timedelta(seconds=10), 25)) + '\n')
+            stream.write(json.dumps(self.quota_event(now - timedelta(seconds=5), 50)))
+        cache = self.root / 'quota.json'
+        target = self.root / 'outside'
+        target.write_text('untouched')
+        cache.symlink_to(target)
+        reminder = module.quota_reminder(self.root / '.codex', cache)
+        self.assertIn('75% remaining', reminder[1])
+        self.assertEqual(target.read_text(), 'untouched')
+        self.assertFalse(cache.is_symlink())
 
     def test_runner_metadata_without_json_support(self):
         codex = self.root / 'codex'
