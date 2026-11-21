@@ -95,12 +95,14 @@ def save(state):
             os.unlink(name)
 
 
-def deliver(message, phase, code, stream, full_prompt=None, reminder=()):
+def deliver(message, phase, code, stream, full_prompt=None, reminder=(), inspect_command=""):
     # Broken stdout or an inaccessible terminal must not roll back a committed END.
     try:
         print(message, file=stream, flush=True)
     except OSError:
         pass
+    if inspect_command:
+        print("Read-only inspection: " + inspect_command, file=stream, flush=True)
     if reminder:
         try:
             print('\n'.join(reminder), file=stream, flush=True)
@@ -141,23 +143,36 @@ def deliver(message, phase, code, stream, full_prompt=None, reminder=()):
 
 
 def main(args):
-    usage = 'Usage: start PROJECT LABEL [CODEX_PID] | end TOKEN EXIT_CODE [METADATA_FILE] | status'
+    usage = 'Usage: start PROJECT LABEL [CODEX_PID [RESUME_ID]] | end TOKEN EXIT_CODE [METADATA_FILE] | status'
     if not args:
         raise ValueError(usage)
     metadata = None
     full_prompt = None
+    resume = None
+    inspect_command = ""
     command = args[0]
-    if command == 'start' and len(args) in (3, 4):
+    if command == 'start' and len(args) in (3, 4, 5):
         task = dict(started=time.time(), project=clean(args[1], 80),
                     label=task_label(args[2]), mode='Manual')
-        if len(args) == 4:
+        if len(args) >= 4:
             pid = int(args[3])
             stamp = identity(pid)
             if stamp is None:
                 raise ValueError('Cannot identify Codex runner')
             task.update(mode='Codex', pid=pid, identity=stamp)
+        if len(args) == 5:
+            from codex_notice import session_id
+            resume = session_id(args[4])
+            if resume is None:
+                raise ValueError('Invalid resume session ID')
         if os.environ.get('CODEX_STARTER_KIT_SHOW_FULL_PROMPT') == '1':
             full_prompt = args[2]
+        inspect_command = os.environ.get('CODEX_STARTER_KIT_INSPECT_COMMAND', '') if len(args) >= 4 else ''
+        if inspect_command:
+            if not re.fullmatch(r'tmux -S /tmp/codex-inspect\.[A-Za-z0-9]{8}/socket attach -r -t codex-inspect-[A-Za-z0-9]{8}', inspect_command):
+                raise ValueError('Invalid inspection command')
+            full_prompt = ('Read-only inspection: ' + inspect_command + '\n\n'
+                           + (full_prompt if full_prompt is not None else ''))
     elif command == 'end' and len(args) in (3, 4):
         if not re.fullmatch('[0-9a-f]{32}', args[1]) or not re.fullmatch('[0-9]{1,3}', args[2]):
             raise ValueError('Invalid token or exit code')
@@ -216,12 +231,17 @@ def main(args):
                 else:
                     prefix = ' — ' if task['mode'] == 'Manual' else ' '
                     suffix = prefix + task['label']
+                if task['mode'] == 'Codex':
+                    suffix += f' | task: {token[:12]}'
+                    if resume:
+                        suffix += f' | resume: {resume}'
             else:
-                task = state.pop(args[1])
+                token = args[1]
+                task = state.pop(token)
                 marker = '✅ END' if code == 0 else '❌ ERROR'
                 duration = max(0, int(time.time() - task['started']))
                 if task['mode'] == 'Codex':
-                    suffix = ' ' + ' | '.join([f'duration: {duration}s', *fields])
+                    suffix = ' ' + ' | '.join([f'duration: {duration}s', f'task: {token[:12]}', *fields])
                 else:
                     suffix = f' ({duration}s)'
             save(state)
@@ -237,7 +257,7 @@ def main(args):
                     # Optional session data must never prevent delivery of the END notice.
                     pass
             deliver(message, command.upper(), 0 if command == 'start' else code,
-                    sys.stderr if command == 'start' else sys.stdout, full_prompt, reminder)
+                    sys.stderr if command == 'start' else sys.stdout, full_prompt, reminder, inspect_command)
             if command == 'start':
                 print(token, flush=True)
         finally:

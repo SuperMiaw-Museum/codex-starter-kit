@@ -132,9 +132,9 @@ Run this example only for a requested task, never on receipt or during preflight
 ```
 
 Manual and Codex tasks share a per-user active count, displayed after each
-transition: `🤖 1 🚀 START Codex [project] task preview`,
-`🤖 0 ✅ END Codex [project] duration: 42s`, or
-`🤖 0 ❌ ERROR Codex [project] duration: 18s`. Notices have timestamps; manual tasks say
+transition: `🤖 1 🚀 START Codex [project] task preview | task: 8e5940bf314a`,
+`🤖 0 ✅ END Codex [project] duration: 42s | task: 8e5940bf314a`, or
+`🤖 0 ❌ ERROR Codex [project] duration: 18s | task: 8e5940bf314a`. Notices have timestamps; manual tasks say
 `Manual`. Zero is always shown. Terminal notices are colored and END rings a bell;
 stdout is plain. Labels are sanitized and truncated.
 

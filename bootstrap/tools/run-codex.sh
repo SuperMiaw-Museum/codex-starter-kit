@@ -73,8 +73,18 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 # Failure to notify must not prevent the requested work.
+inspect_notice=
+if [[ ${CODEX_STARTER_KIT_LIVE_INSPECT:-0} == 1 ]]; then
+  inspect_dir=$(mktemp -d /tmp/codex-inspect.XXXXXXXX) || exit 1
+  inspect_session=${inspect_dir##*/}
+  inspect_session=${inspect_session/./-}
+  printf -v inspect_notice 'tmux -S %q attach -r -t %q' "$inspect_dir/socket" "$inspect_session"
+fi
+start_args=(start "$(basename -- "$project_dir")" "$notice_task" "$$")
+[[ -z $resume_id ]] || start_args+=("${resume_id,,}")
 token=$(CODEX_STARTER_KIT_SHOW_FULL_PROMPT="${CODEX_STARTER_KIT_SHOW_FULL_PROMPT:-0}" \
-  "$script_dir/notify-task-done.sh" start "$(basename -- "$project_dir")" "$notice_task" "$$") || token=
+  CODEX_STARTER_KIT_INSPECT_COMMAND="$inspect_notice" \
+  "$script_dir/notify-task-done.sh" "${start_args[@]}") || token=
 args=(exec)
 [[ -z $resume_id ]] || args+=(resume)
 help_args=("${args[@]}" --help)
@@ -99,9 +109,6 @@ run_codex() {
   "$@"
 }
 if [[ ${CODEX_STARTER_KIT_LIVE_INSPECT:-0} == 1 ]]; then
-  inspect_dir=$(mktemp -d /tmp/codex-inspect.XXXXXXXX) || exit 1
-  inspect_session=${inspect_dir##*/}
-  inspect_session=${inspect_session/./-}
   printf '%s\n' "$task" > "$inspect_dir/task" || exit 1
   export -f run_codex
   if ! tmux -S "$inspect_dir/socket" -f /dev/null new-session -d -s "$inspect_session" \

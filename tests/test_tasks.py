@@ -75,6 +75,39 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(self.state()[result.stdout.strip()]['label'], 'Short manual task with details')
         self.assertEqual(self.run_task('end', result.stdout.strip(), '0').returncode, 0)
 
+    def test_codex_inspection_command_in_start_notice(self):
+        command = ('tmux -S /tmp/codex-inspect.Ab12Cd34/socket '
+                   'attach -r -t codex-inspect-Ab12Cd34')
+        self.env['CODEX_STARTER_KIT_INSPECT_COMMAND'] = command
+        result = subprocess.run(
+            [str(self.bundle / 'tools/notify-task-done.sh'),
+             'start', 'project', 'task details', str(os.getpid())],
+            env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        token = result.stdout.strip()
+        summary, inspection = result.stderr.splitlines()
+        self.assertTrue(summary.endswith(f' | task: {token[:12]}'))
+        self.assertEqual(inspection, 'Read-only inspection: ' + command)
+        self.assertEqual(self.run_task('end', token, '0').returncode, 0)
+
+    def test_codex_notices_correlate_overlapping_tasks_in_same_project(self):
+        script = str(self.bundle / 'tools/notify-task-done.sh')
+        tokens = []
+        for _ in range(2):
+            start = subprocess.run([script, 'start', 'project', 'same task', str(os.getpid())],
+                                   env=self.env, text=True, capture_output=True)
+            self.assertEqual(start.returncode, 0, start.stderr)
+            token = start.stdout.strip()
+            self.assertTrue(start.stderr.endswith(f' | task: {token[:12]}\n'))
+            tokens.append(token)
+        self.assertNotEqual(tokens[0][:12], tokens[1][:12])
+
+        for token in reversed(tokens):
+            end = self.run_task('end', token, '0')
+            self.assertEqual(end.returncode, 0, end.stderr)
+            self.assertTrue(end.stdout.endswith(f' | task: {token[:12]}\n'))
+        self.assertEqual(self.state(), {})
+
     def test_status_readable_truncation(self):
         self.env['TZ'] = 'EST5'
         self.start('A short\ntask')
@@ -312,7 +345,10 @@ class TaskTests(unittest.TestCase):
         self.assertIn('SANDBOX_HANDOFF_EXIT_CODE=7', log)
         self.assertIn('❌ ERROR Codex', log)
         self.assertIn(f'tokens: 15 | session: {session}', log)
-        self.assertIn('START Codex', (self.root / 'stderr').read_text())
+        summary, inspection = (self.root / 'stderr').read_text().splitlines()
+        self.assertIn('START Codex', summary)
+        self.assertTrue(summary.endswith(f' | resume: {session}'))
+        self.assertEqual(inspection, f'Read-only inspection: tmux -S {socket} attach -r -t {tmux_session}')
         self.assertEqual(self.state(), {})
         self.assertFalse(Path(socket).parent.exists())
 
@@ -336,6 +372,7 @@ class TaskTests(unittest.TestCase):
 
     def test_runner_resume_uses_stdin_and_captures_actual_session(self):
         session = '01234567-89ab-4def-8123-0123456789ab'
+        requested = 'fedcba98-7654-4321-8765-43210fedcba9'
         task = '- continue this task\nsecond line'
         task_file = self.root / 'task.txt'
         task_file.write_text(task + '\n')
@@ -356,24 +393,29 @@ class TaskTests(unittest.TestCase):
         self.env.update(PATH=f'{self.root}:{self.env["PATH"]}', ACTUAL_SESSION=session)
         runner = self.bundle / 'tools/run-codex.sh'
         invocations = self.root / 'invocations'
-        # Codex accepts uppercase UUID input but emits the canonical session ID.
+        # Keep the requested UUID separate from the UUID reported by Codex.
         for code, task_args in ((0, ['--task', task]), (0, [str(task_file)]),
                                 (9, ['--task', task])):
             with self.subTest(code=code, task_args=task_args):
                 invocations.write_text('')
                 result = subprocess.run(
-                    [str(runner), str(self.root), '--resume', session.upper(), *task_args],
+                    [str(runner), str(self.root), '--resume', requested.upper(), *task_args],
                     env=dict(self.env, CODEX_RESULT=str(code)),
                     capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode, code, result.stderr)
                 self.assertEqual(invocations.read_text(),
-                                 f'exec resume --skip-git-repo-check --json {session.upper()} -\n')
+                                 f'exec resume --skip-git-repo-check --json {requested.upper()} -\n')
                 self.assertEqual((self.root / 'prompt').read_text(), task + '\n')
                 self.assertIn(f'SANDBOX_HANDOFF_EXIT_CODE={code}', result.stdout)
+                task_id = re.search(r' \| task: ([0-9a-f]{12}) \| resume: ' + requested + r'$',
+                                    result.stderr.splitlines()[0])
+                self.assertIsNotNone(task_id, result.stderr)
+                self.assertIn(f' | task: {task_id[1]}', result.stdout)
                 if code:
                     self.assertIn('Session unavailable', result.stderr)
                     self.assertIn('ERROR Codex', result.stdout)
                     self.assertNotIn('SANDBOX_HANDOFF_SESSION_ID=', result.stdout)
+                    self.assertNotIn(' | session:', result.stdout)
                 else:
                     self.assertIn(f'SANDBOX_HANDOFF_SESSION_ID={session}\n', result.stdout)
                     self.assertIn(f' | session: {session}\n', result.stdout)
@@ -421,14 +463,15 @@ class TaskTests(unittest.TestCase):
                 self.assertRegex(
                     result.stderr,
                     rf'^\[\d{{2}}:\d{{2}}:\d{{2}}\] 🤖 1 🚀 START Codex '
-                    rf'\[{re.escape(self.root.name)}\]{re.escape(preview)}\n\Z')
+                    rf'\[{re.escape(self.root.name)}\]{re.escape(preview)} \| task: [0-9a-f]{{12}}\n\Z')
                 display, marker, output = result.stdout.partition('Codex started\n')
                 self.assertEqual(display, '')
                 self.assertEqual(marker, 'Codex started\n')
                 self.assertTrue(output.startswith(task + '\n'))
                 self.assertRegex(output[len(task) + 1:],
                                  r'^\[\d{2}:\d{2}:\d{2}\] 🤖 0 ❌ ERROR Codex '
-                                 r'\[[^\n]+\] duration: \d+s\nSANDBOX_HANDOFF_EXIT_CODE=7\n\Z')
+                                 r'\[[^\n]+\] duration: \d+s \| task: [0-9a-f]{12}\n'
+                                 r'SANDBOX_HANDOFF_EXIT_CODE=7\n\Z')
                 start = f'\r\n\x1b[1;36m{result.stderr.rstrip(chr(10))}\x1b[0m\r\n'.encode()
                 if setting == '1':
                     start += task.encode() + (b'\n\n' if len(task_args) == 1 else b'\r\n')
@@ -456,7 +499,7 @@ class TaskTests(unittest.TestCase):
                 self.assertRegex(
                     result.stderr,
                     rf'^\[\d{{2}}:\d{{2}}:\d{{2}}\] 🤖 1 🚀 START Codex '
-                    rf'\[{re.escape(self.root.name)}\] {re.escape(preview)}\n\Z')
+                    rf'\[{re.escape(self.root.name)}\] {re.escape(preview)} \| task: [0-9a-f]{{12}}\n\Z')
 
     def test_runner_signal_and_notification_failure(self):
         bin_dir = self.root / 'bin'
@@ -536,6 +579,8 @@ class TaskTests(unittest.TestCase):
                 self.assertEqual(result.returncode, code, result.stderr)
                 self.assertIn('START Codex', result.stderr)
                 self.assertNotIn('session:', result.stderr)
+                task_id = re.search(r' \| task: ([0-9a-f]{12})\n\Z', result.stderr)
+                self.assertIsNotNone(task_id, result.stderr)
                 self.assertNotIn('PRIVATE FULL PROMPT', result.stdout + result.stderr)
                 self.assertTrue(result.stdout.startswith('Agent output\n'))
                 start = f'\r\n\x1b[1;36m{result.stderr.rstrip(chr(10))}\x1b[0m\r\n'
@@ -548,7 +593,8 @@ class TaskTests(unittest.TestCase):
                     tokens = ' | tokens: 1,025' if code in (0, 7) else ''
                     suffix = f' | model: test-model{tokens} | session: {session}'
                 notice = (rf'\[\d{{2}}:\d{{2}}:\d{{2}}\] 🤖 0 {marker} Codex '
-                          rf'\[{re.escape(self.root.name)}\] duration: \d+s{re.escape(suffix)}')
+                          rf'\[{re.escape(self.root.name)}\] duration: \d+s \| task: {task_id[1]}'
+                          rf'{re.escape(suffix)}')
                 reminder = []
                 if setting == '1':
                     reminder = [r'⏱️ Codex 5-hour: 75% remaining · resets in (?:1h|\d+m)',
@@ -609,7 +655,7 @@ class TaskTests(unittest.TestCase):
             start = subprocess.run([script, 'start', 'p', 'quota check', str(os.getpid())],
                                    env=self.env, text=True, capture_output=True, timeout=5)
             self.assertEqual(start.returncode, 0, start.stderr)
-            self.assertRegex(start.stderr, r'START Codex \[p\] quota check\n\Z')
+            self.assertRegex(start.stderr, r'START Codex \[p\] quota check \| task: [0-9a-f]{12}\n\Z')
             result = subprocess.run([script, 'end', start.stdout.strip(), '0'],
                                     env=self.env, text=True, capture_output=True, timeout=5)
             self.assertEqual((result.returncode, result.stderr), (0, ''))
@@ -621,7 +667,7 @@ class TaskTests(unittest.TestCase):
                 if setting is not None:
                     self.env['CODEX_STARTER_KIT_LIMIT_REMINDER'] = setting
                 lines = finish_codex()
-                self.assertRegex(lines[0], r'END Codex \[p\] duration: \d+s$')
+                self.assertRegex(lines[0], r'END Codex \[p\] duration: \d+s \| task: [0-9a-f]{12}$')
                 self.assertEqual(len(lines), 3 if setting == '1' else 1)
                 if setting == '1':
                     self.assertIn('87.5% remaining', lines[1])
@@ -644,7 +690,8 @@ class TaskTests(unittest.TestCase):
             env=self.env, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 6, result.stderr)
         self.assertTrue(result.stdout.startswith('fallback\n'))
-        self.assertRegex(result.stdout, r'ERROR Codex .* duration: \d+s\nSANDBOX_HANDOFF_EXIT_CODE=6\n$')
+        self.assertRegex(result.stdout, r'ERROR Codex .* duration: \d+s \| task: [0-9a-f]{12}\n'
+                         r'SANDBOX_HANDOFF_EXIT_CODE=6\n$')
         self.assertEqual(self.state(), {})
 
     def test_terminal_payload_owner_and_bell(self):

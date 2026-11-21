@@ -22,10 +22,10 @@ transition in order. Counts include both manual and Codex tasks and always show
 zero, with the count immediately before the status emoji:
 
 ```text
-[12:00:00] 🤖 3 🚀 START Codex [project] task preview
-[12:00:42] 🤖 2 ✅ END Codex [project] duration: 42s | model: gpt-5.4 | tokens: 1,025
-[12:00:44] 🤖 1 ❌ ERROR Codex [project] duration: 18s
-[12:01:35] 🤖 0 ✅ END Codex [project] duration: 95s
+[12:00:00] 🤖 3 🚀 START Codex [project] task preview | task: 8e5940bf314a
+[12:00:42] 🤖 2 ✅ END Codex [project] duration: 42s | task: 8e5940bf314a | model: gpt-5.4 | tokens: 1,025 | session: 01234567-89ab-4def-8123-0123456789ab
+[12:00:44] 🤖 1 ❌ ERROR Codex [project] duration: 18s | task: f260a31cd2b4
+[12:01:35] 🤖 0 ✅ END Codex [project] duration: 95s | task: 50d6f124a3e7
 ```
 
 Manual notices use `Manual`. START writes its notice to stderr and only the token
@@ -58,8 +58,12 @@ only the START header on the first line and the full task prompt below it in
 the SSH terminal. The prompt keeps its line breaks and backslashes and is
 written as plain text. The registry stores only the bounded label.
 
-Codex END and ERROR notices show the duration followed by any available
-`model:`, `tokens:` and `session:` fields, with ` | ` between fields. By default
+Codex START, END and ERROR summaries show `task:` followed by the first 12
+hexadecimal characters of the registry token. A START with `--resume` ends
+with `resume:` and the requested UUID. Codex END and ERROR summaries show the
+duration, the task identifier, and any available `model:`, `tokens:` and
+`session:` fields, in that order, with ` | ` between fields. The `session:`
+field comes from the session reported by Codex. By default
 the runner uses `codex exec --json` when supported and streams completed agent messages and
 errors. Set `CODEX_STARTER_KIT_NOTIFY_METADATA=0` to disable capture and use the
 usual Codex tool and progress display. The token count
