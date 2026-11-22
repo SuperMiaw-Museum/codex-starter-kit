@@ -24,7 +24,7 @@ class ReleaseTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name) / 'kit'
         self.root.mkdir()
-        for name in ('release.sh', 'release.py', 'README.md', 'bootstrap'):
+        for name in ('release.sh', 'maintenance', 'README.md', 'bootstrap'):
             src = SOURCE / name
             if src.is_dir():
                 shutil.copytree(src, self.root / name)
@@ -101,7 +101,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(before, self.snapshot())
 
     def test_bump_arithmetic_unit(self):
-        spec = importlib.util.spec_from_file_location('release', SOURCE / 'release.py')
+        spec = importlib.util.spec_from_file_location('release', SOURCE / 'maintenance/release.py')
         release = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(release)
         self.assertEqual(release.bump('1.2.9', 'patch'), '1.2.10')

@@ -9,4 +9,4 @@ if ! type -P python3 >/dev/null 2>&1; then
   exit 1
 fi
 script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) || exit 1
-exec python3 -B "$script_dir/setup_bootstrap.py" "$BASH" "${1:---preview}"
+exec python3 -B "$script_dir/internal/setup_bootstrap.py" "$BASH" "${1:---preview}"

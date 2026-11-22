@@ -15,8 +15,8 @@ import unittest
 
 from test_codex_exec_sandbox import fixture_config, responses_fixture
 
-TOOLS = Path(__file__).resolve().parents[1] / 'bootstrap/tools'
-sys.path.insert(0, str(TOOLS))
+INTERNAL = Path(__file__).resolve().parents[1] / 'bootstrap/internal'
+sys.path.insert(0, str(INTERNAL))
 from bubblewrap_exec import OfflineBubblewrap
 import offline_model_relay as relay
 

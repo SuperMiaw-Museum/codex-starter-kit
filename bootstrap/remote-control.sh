@@ -4,4 +4,4 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) || exi
 if [[ ${1:-} == --auto ]] && ! command -v python3 >/dev/null 2>&1; then
   exit 0
 fi
-exec python3 -B "$script_dir/remote_control.py" "$0" "$@"
+exec python3 -B "$script_dir/internal/remote_control.py" "$0" "$@"

@@ -36,14 +36,14 @@ Keep each task independently understandable. A later task may rely on files crea
 After explicit approval, from the starter-kit checkout:
 
 ```bash
-bootstrap/tools/batch.sh run /path/to/batch.json
+bootstrap/orchestration/batch.sh run /path/to/batch.json
 ```
 
 The command prints `BATCH_ID=<id>` once the batch has been created. Save this ID to inspect or resume the batch:
 
 ```bash
-bootstrap/tools/batch.sh status <id>
-bootstrap/tools/batch.sh resume <id>
+bootstrap/orchestration/batch.sh status <id>
+bootstrap/orchestration/batch.sh resume <id>
 ```
 
 `status` prints JSON with the overall status and each task's status. It does not start Codex. `resume` checks durable results and continues only when it can establish that preceding tasks succeeded.

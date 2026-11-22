@@ -23,7 +23,7 @@ import project_lock
 import task_registry
 
 
-TOOLS = Path(__file__).resolve().parent
+INTERNAL = Path(__file__).resolve().parent
 POLL_INTERVAL = 0.03
 SIGNAL_GRACE = 0.75
 CAPTURE_GRACE = 2
@@ -230,7 +230,7 @@ def execute(command, project, env, task_file, metadata, cancelled, session_file=
         if metadata:
             reader = select.poll()
             reader.register(child.stdout, select.POLLIN)
-            parser_args = [sys.executable, '-B', str(TOOLS / 'codex_notice.py'), str(metadata)]
+            parser_args = [sys.executable, '-B', str(INTERNAL / 'codex_notice.py'), str(metadata)]
             if session_file:
                 parser_args.append(str(session_file))
             elif protected:

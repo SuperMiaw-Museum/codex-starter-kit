@@ -36,7 +36,7 @@ refactoring, tests, or when explicitly requested. If uncertain, propose a
 choice rather than silently launching an agent.
 
 For Codex, confirm the absolute bundle and project paths, read project AGENTS.md,
-and delegate through `bootstrap/tools/run-codex.sh` with a self-contained task
+and delegate through `bootstrap/orchestration/run-codex.sh` with a self-contained task
 file or `--task` argument. Include applicable external repository access limits
 in the delegated task. The wrapper sends START/END notifications; never
 duplicate them. Do not automatically poll or retrieve results after launching
@@ -44,7 +44,7 @@ Codex. Wait for the human to request follow-up.
 
 ## Conditional extensions
 
-Optional operational instructions live in `bootstrap/PROMPT.EXTENSION.*.md`.
+Optional operational instructions live in `bootstrap/orchestration/PROMPT.EXTENSION.*.md`.
 Advertise the available capabilities once when this prompt is received, without
 reading their files. For subsequent requests, suggest a relevant extension only
 when it would materially help. Read an extension after the human agrees to
@@ -55,10 +55,10 @@ conversation unless the human changes scope. Loading one does not authorize
 commands, edits, or Codex launches by itself.
 
 Available extensions:
-- `PROMPT.EXTENSION.REPOSITORIES.md`: linked external repositories (`ro`/`rw`).
-- `PROMPT.EXTENSION.RESUME.md`: resuming an earlier Codex session.
-- `PROMPT.EXTENSION.MANUAL.md`: manual-work START/END notifications.
-- `PROMPT.EXTENSION.BATCH.md`: sequential multi-task Codex batches.
+- `orchestration/PROMPT.EXTENSION.REPOSITORIES.md`: linked external repositories (`ro`/`rw`).
+- `orchestration/PROMPT.EXTENSION.RESUME.md`: resuming an earlier Codex session.
+- `orchestration/PROMPT.EXTENSION.MANUAL.md`: manual-work START/END notifications.
+- `orchestration/PROMPT.EXTENSION.BATCH.md`: sequential multi-task Codex batches.
 
 After the human approves an extension, read it before performing the relevant
 workflow. Do not automatically activate extensions based only on inferred need.

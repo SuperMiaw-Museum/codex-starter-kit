@@ -22,7 +22,15 @@ Use the displayed connection details to connect from ChatGPT, then paste the rem
 ~/codex-starter-kit/bootstrap/remote-control.sh --show
 ```
 
-After updating the checkout, rerun `setup.sh` for any installed components you want to refresh. Changes are applied only when needed; the bridge is never restarted automatically.
+After updating the checkout, rerun `setup.sh` for any installed components you
+want to refresh. Changes are applied only when needed. Setup leaves a running
+bridge alone.
+
+If your installed unit points to an older `desktop-commander.sh` location, wait
+for active Codex tasks to finish, then run `bootstrap/setup.sh --install-service`
+before the next service start or restart. This refreshes the unit to use
+`bootstrap/internal/desktop-commander.sh`. The SSH hook still invokes
+`bootstrap/remote-control.sh`.
 
 If service installation reports that `daemon-reload` failed, fix the user
 manager issue and rerun `setup.sh --install-service`. The installer records

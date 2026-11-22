@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
-# Keep the release CLI at its original path.
+# Run the repository release CLI.
 script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) || exit 1
-exec python3 -B "$script_dir/release.py" "$@"
+exec python3 -B "$script_dir/maintenance/release.py" "$@"

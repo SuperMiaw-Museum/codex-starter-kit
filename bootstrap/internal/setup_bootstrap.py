@@ -10,7 +10,7 @@ import sys
 import tempfile
 
 
-BOOTSTRAP = Path(__file__).resolve().parent
+BOOTSTRAP = Path(__file__).resolve().parents[1]
 BEGIN = b'# BEGIN codex-starter-kit reminder'
 END = b'# END codex-starter-kit reminder'
 
@@ -27,7 +27,7 @@ def unit_quote(value):
 
 
 def render_unit(home):
-    runner = unit_quote(str(BOOTSTRAP / 'tools/desktop-commander.sh')).replace('$', '$$')
+    runner = unit_quote(str(BOOTSTRAP / 'internal/desktop-commander.sh')).replace('$', '$$')
     return (
         '# codex-starter-kit managed unit v1\n'
         '[Unit]\nDescription=Desktop Commander Remote\n'

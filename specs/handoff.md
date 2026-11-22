@@ -81,11 +81,11 @@ after launching it; inspect results only when the human requests a follow-up.
 ## Delegate implementation or substantial project work to Codex
 
 Resolve this bundle's absolute path on the VM. Delegate project work through its
-`bootstrap/tools/run-codex.sh`, passing the confirmed project path and a task file, or `--task` followed by a quoted,
+`bootstrap/orchestration/run-codex.sh`, passing the confirmed project path and a task file, or `--task` followed by a quoted,
 self-contained task that includes relevant constraints and verification:
 
 ```bash
-"$HOME/codex-starter-kit/bootstrap/tools/run-codex.sh" \
+"$HOME/codex-starter-kit/bootstrap/orchestration/run-codex.sh" \
   "$HOME/codex-starter-kit" \
   --task "Read root AGENTS.md and summarize the bootstrap tools. Do not edit files."
 ```
@@ -123,7 +123,7 @@ Run this example only for a requested task, never on receipt or during preflight
 ```bash
 (
   set +e
-  manual="$HOME/codex-starter-kit/bootstrap/tools/manual-task.sh"
+  manual="$HOME/codex-starter-kit/bootstrap/orchestration/manual-task.sh"
   cd "$HOME/codex-starter-kit" || exit 2
   token=$("$manual" start codex-starter-kit 'Check root AGENTS.md exists') || exit 2
   bash -c 'pwd; test -f AGENTS.md'

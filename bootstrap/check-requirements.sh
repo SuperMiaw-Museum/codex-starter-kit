@@ -14,5 +14,5 @@ python=$(type -P python3) || {
 }
 [[ $python == /* ]] || python=$PWD/$python
 script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) || exit 1
-case $profile in service|tools|all) source "$script_dir/.common-env.sh" ;; esac
-exec "$python" -B "$script_dir/check_requirements.py" "$profile"
+case $profile in service|tools|all) source "$script_dir/internal/.common-env.sh" ;; esac
+exec "$python" -B "$script_dir/internal/check_requirements.py" "$profile"

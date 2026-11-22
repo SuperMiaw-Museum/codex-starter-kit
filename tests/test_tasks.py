@@ -32,20 +32,20 @@ class TaskTests(unittest.TestCase):
         self.bundle = self.root / 'bootstrap'
         shutil.copytree(SOURCE, self.bundle)
         self.registry = self.root / 'registry'
-        path = self.bundle / 'tools/task_registry.py'
+        path = self.bundle / 'internal/task_registry.py'
         code = path.read_text().replace("Path('/tmp') / f'codex-starter-kit-tasks-{os.getuid()}'",
                                         f'Path({str(self.registry)!r})')
         # Isolated subprocesses never send notices to real user terminals.
         code = code.replace("entries = os.listdir('/dev/pts')", 'entries = []')
         path.write_text(code)
-        locking = self.bundle / 'tools/project_lock.py'
+        locking = self.bundle / 'internal/project_lock.py'
         lock_parent = tempfile.TemporaryDirectory()
         self.addCleanup(lock_parent.cleanup)
         self.lock_root = Path(lock_parent.name) / 'project-locks'
         locking.write_text(locking.read_text().replace(
             "Path('/tmp') / f'codex-starter-kit-project-locks-{os.getuid()}'",
             f'Path({str(self.lock_root)!r})'))
-        self.test_runner = self.bundle / 'tools/run_codex.py'
+        self.test_runner = self.bundle / 'internal/run_codex.py'
         self.real_runner_source = self.test_runner.read_text()
         # Protocol tests only. The production entry point has no override.
         self.test_runner.write_text(self.real_runner_source.replace(
@@ -59,7 +59,7 @@ class TaskTests(unittest.TestCase):
         self.env.pop('CODEX_STARTER_KIT_LIVE_INSPECT', None)
 
     def run_task(self, *args):
-        return subprocess.run([str(self.bundle / 'tools/manual-task.sh'), *args],
+        return subprocess.run([str(self.bundle / 'orchestration/manual-task.sh'), *args],
                               env=self.env, text=True, capture_output=True)
 
     def start(self, label='label'):
@@ -72,19 +72,19 @@ class TaskTests(unittest.TestCase):
         return json.loads((self.registry / 'tasks.json').read_text())
 
     def registry_module(self):
-        spec = importlib.util.spec_from_file_location('tasks', self.bundle / 'tools/task_registry.py')
+        spec = importlib.util.spec_from_file_location('tasks', self.bundle / 'internal/task_registry.py')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module
 
     def project_lock_module(self):
-        spec = importlib.util.spec_from_file_location('project_lock', self.bundle / 'tools/project_lock.py')
+        spec = importlib.util.spec_from_file_location('project_lock', self.bundle / 'internal/project_lock.py')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module
 
     def lock_runner(self, project, reservation=None):
-        args = [str(self.bundle / 'tools/run-codex.sh')]
+        args = [str(self.bundle / 'orchestration/run-codex.sh')]
         if reservation is not None:
             args += ['--reservation-fd', str(reservation)]
         return args + [str(project), '--task', 'lock test']
@@ -215,7 +215,7 @@ class TaskTests(unittest.TestCase):
 
     def test_runner_crash_around_receipt_publication(self):
         self.fake_lock_codex('raise SystemExit(0)\n')
-        state_module = self.bundle / 'tools/batch_state.py'
+        state_module = self.bundle / 'internal/batch_state.py'
         source = state_module.read_text()
         write = '        write_state(self.receipt, dict(self.identity, result=asdict(result)), replace=False)'
         self.assertIn(write, source)
@@ -366,7 +366,7 @@ class TaskTests(unittest.TestCase):
             ' "--task", "survive"], pass_fds=(fd,))\n'
             '    (project / "runner").write_text(str(runner.pid))\n'
             '    runner.wait()\n')
-        owner = subprocess.Popen([sys.executable, '-B', '-c', launcher, str(self.bundle / 'tools'),
+        owner = subprocess.Popen([sys.executable, '-B', '-c', launcher, str(self.bundle / 'internal'),
                                   str(self.root), self.lock_runner(self.root)[0]], env=self.env,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         runner_pid = None
@@ -715,7 +715,7 @@ class TaskTests(unittest.TestCase):
                    'attach -r -t codex-inspect-Ab12Cd34')
         self.env['CODEX_STARTER_KIT_INSPECT_COMMAND'] = command
         result = subprocess.run(
-            [str(self.bundle / 'tools/notify-task-done.sh'),
+            [str(self.bundle / 'orchestration/notify-task-done.sh'),
              'start', 'project', 'task details', str(os.getpid())],
             env=self.env, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -726,7 +726,7 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(self.run_task('end', token, '0').returncode, 0)
 
     def test_codex_notices_correlate_overlapping_tasks_in_same_project(self):
-        script = str(self.bundle / 'tools/notify-task-done.sh')
+        script = str(self.bundle / 'orchestration/notify-task-done.sh')
         tokens = []
         for _ in range(2):
             start = subprocess.run([script, 'start', 'project', 'same task', str(os.getpid())],
@@ -749,7 +749,7 @@ class TaskTests(unittest.TestCase):
         self.start('x' * 120)
         self.start('y' * 121)
         codex = subprocess.run(
-            [str(self.bundle / 'tools/notify-task-done.sh'), 'start', 'other', 'Codex task', str(os.getpid())],
+            [str(self.bundle / 'orchestration/notify-task-done.sh'), 'start', 'other', 'Codex task', str(os.getpid())],
             env=self.env, text=True, capture_output=True)
         self.assertEqual(codex.returncode, 0, codex.stderr)
 
@@ -802,7 +802,7 @@ class TaskTests(unittest.TestCase):
 
     def test_mixed_transitions_deliver_in_commit_order(self):
         # Record what delivery sees while the cross-process lock is held.
-        path = self.bundle / 'tools/task_registry.py'
+        path = self.bundle / 'internal/task_registry.py'
         path.write_text(path.read_text().replace(
             '    # Broken stdout',
             "    with (ROOT / 'events.jsonl').open('a') as log:\n"
@@ -815,7 +815,7 @@ class TaskTests(unittest.TestCase):
                 return self.run_task('end', tokens[index // 2], '0')
             # A real, live process identity makes this a Codex task.
             return subprocess.run(
-                [str(self.bundle / 'tools/notify-task-done.sh'), 'start', 'p', 'l', str(os.getpid())],
+                [str(self.bundle / 'orchestration/notify-task-done.sh'), 'start', 'p', 'l', str(os.getpid())],
                 env=self.env, text=True, capture_output=True)
         with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
             results = list(pool.map(transition, range(20)))
@@ -858,7 +858,7 @@ class TaskTests(unittest.TestCase):
         codex.write_text('#!/bin/bash\ncat >/dev/null\nexit 7\n')
         codex.chmod(0o755)
         result = subprocess.run(
-            [str(self.bundle / 'tools/run-codex.sh'), str(self.root), '--task', 'run anyway'],
+            [str(self.bundle / 'orchestration/run-codex.sh'), str(self.root), '--task', 'run anyway'],
             env=dict(self.env, PATH=f'{self.root}:{self.env["PATH"]}',
                      CODEX_STARTER_KIT_NOTIFY_METADATA='0'),
             capture_output=True, text=True, timeout=5)
@@ -868,7 +868,7 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(), malformed)
 
     def test_nonregular_notice_logs_do_not_block_end(self):
-        notifier = str(self.bundle / 'tools/notify-task-done.sh')
+        notifier = str(self.bundle / 'orchestration/notify-task-done.sh')
         home = self.root / '.codex'
         directory = home / 'sessions/2026/11/22'
         directory.mkdir(parents=True)
@@ -943,7 +943,7 @@ class TaskTests(unittest.TestCase):
         (nvm / 'nvm.sh').write_text(f'export NVM_OK=yes\nexport PATH="{bin_dir}:$PATH"\n')
         task = self.root / 'task.txt'
         task.write_text('a task\nsecond line\n')
-        result = subprocess.run([str(self.bundle / 'tools/run-codex.sh'), str(self.root), str(task)],
+        result = subprocess.run([str(self.bundle / 'orchestration/run-codex.sh'), str(self.root), str(task)],
                                 env=self.env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 7, result.stderr)
         self.assertIn('🤖 2 🚀 START Codex', result.stderr)
@@ -961,7 +961,7 @@ class TaskTests(unittest.TestCase):
         codex.write_text('#!/bin/bash\nexit 99\n')
         codex.chmod(0o755)
         result = subprocess.run(
-            [str(self.bundle / 'tools/run-codex.sh'), str(self.root), '--task', 'inspect'],
+            [str(self.bundle / 'orchestration/run-codex.sh'), str(self.root), '--task', 'inspect'],
             env=dict(self.env, PATH=str(self.root), CODEX_STARTER_KIT_LIVE_INSPECT='1'),
             capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 127)
@@ -990,7 +990,7 @@ class TaskTests(unittest.TestCase):
         codex.chmod(0o755)
         env = dict(self.env, PATH=f'{self.root}:{self.env["PATH"]}',
                    CODEX_STARTER_KIT_LIVE_INSPECT='1')
-        args = [str(self.bundle / 'tools/run-codex.sh'), str(self.root),
+        args = [str(self.bundle / 'orchestration/run-codex.sh'), str(self.root),
                 '--resume', session, '--task', 'resume task']
         # Use files so a failure to publish the attachment command cannot block a read.
         with (self.root / 'stdout').open('w+') as output, (self.root / 'stderr').open('w+') as errors:
@@ -1039,7 +1039,7 @@ class TaskTests(unittest.TestCase):
 
     def test_runner_rejects_invalid_resume_arguments(self):
         session = '01234567-89ab-4def-8123-0123456789ab'
-        runner = self.bundle / 'tools/run-codex.sh'
+        runner = self.bundle / 'orchestration/run-codex.sh'
         for args in (('--resume',), ('--resume', session), ('--resume', session, '--task'),
                      ('--resume', '--last', '--task', 'text'),
                      ('--resume', 'invalid-id', '--task', 'text'),
@@ -1076,7 +1076,7 @@ class TaskTests(unittest.TestCase):
         )
         codex.chmod(0o755)
         self.env.update(PATH=f'{self.root}:{self.env["PATH"]}', ACTUAL_SESSION=session)
-        runner = self.bundle / 'tools/run-codex.sh'
+        runner = self.bundle / 'orchestration/run-codex.sh'
         invocations = self.root / 'invocations'
         # Keep the requested UUID separate from the UUID reported by Codex.
         for code, task_args in ((0, ['--task', task]), (0, [str(task_file)]),
@@ -1122,7 +1122,7 @@ class TaskTests(unittest.TestCase):
         tty.setraw(slave)
         os.set_blocking(master, False)
         entry = Path(os.ttyname(slave)).name
-        registry_script = self.bundle / 'tools/task_registry.py'
+        registry_script = self.bundle / 'internal/task_registry.py'
         registry_script.write_text(registry_script.read_text().replace('entries = []', f'entries = [{entry!r}]'))
         bin_dir = self.root / 'bin'
         bin_dir.mkdir()
@@ -1141,7 +1141,7 @@ class TaskTests(unittest.TestCase):
                 if setting is not None:
                     env['CODEX_STARTER_KIT_SHOW_FULL_PROMPT'] = setting
                 result = subprocess.run(
-                    [str(self.bundle / 'tools/run-codex.sh'), str(self.root), *task_args],
+                    [str(self.bundle / 'orchestration/run-codex.sh'), str(self.root), *task_args],
                     env=env, capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode, 7, result.stderr)
                 preview = '' if setting == '1' else ' ' + task.replace('\n', ' ')[:120] + '...'
@@ -1178,7 +1178,7 @@ class TaskTests(unittest.TestCase):
                               ('x' * 121, 'x' * 120 + '...')):
             with self.subTest(length=len(task)):
                 result = subprocess.run(
-                    [str(self.bundle / 'tools/run-codex.sh'), str(self.root), '--task', task],
+                    [str(self.bundle / 'orchestration/run-codex.sh'), str(self.root), '--task', task],
                     env=self.env, capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertRegex(
@@ -1193,7 +1193,7 @@ class TaskTests(unittest.TestCase):
         codex.write_text('#!/bin/bash\nkill -TERM "$PPID"\nexit 0\n')
         codex.chmod(0o755)
         self.env['PATH'] = str(bin_dir) + ':' + self.env['PATH']
-        result = subprocess.run([str(self.bundle / 'tools/run-codex.sh'), str(self.root),
+        result = subprocess.run([str(self.bundle / 'orchestration/run-codex.sh'), str(self.root),
                                  '--task', 'signal check'], env=self.env,
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 143, result.stderr)
@@ -1203,7 +1203,7 @@ class TaskTests(unittest.TestCase):
         # Registry rejection is best effort for the runner; task still executes.
         (self.registry / 'tasks.json').write_text('corrupt')
         codex.write_text('#!/bin/bash\ncat\nexit 9\n')
-        result = subprocess.run([str(self.bundle / 'tools/run-codex.sh'), str(self.root),
+        result = subprocess.run([str(self.bundle / 'orchestration/run-codex.sh'), str(self.root),
                                  '--task', 'still runs'], env=self.env,
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 9)
@@ -1219,7 +1219,7 @@ class TaskTests(unittest.TestCase):
         codex.write_text('#!/bin/bash\ncat > received\n')
         codex.chmod(0o755)
         result = subprocess.run(
-            ['bootstrap/tools/run-codex.sh', project.name, '--task-file', 'task.txt'],
+            ['bootstrap/orchestration/run-codex.sh', project.name, '--task-file', 'task.txt'],
             cwd=self.root,
             env=dict(self.env, PATH=f'{self.root}:{self.env["PATH"]}', CDPATH=str(self.root)),
             capture_output=True, text=True, timeout=10)
@@ -1231,7 +1231,7 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(self.state(), {})
 
     def test_runner_parser_failure_drains_stdout_and_keeps_codex_status(self):
-        parser = self.bundle / 'tools/codex_notice.py'
+        parser = self.bundle / 'internal/codex_notice.py'
         parser.write_text(parser.read_text().replace('capture(*sys.argv[1:])', 'sys.exit(23)'))
         codex = self.root / 'codex'
         codex.write_text(f'#!{sys.executable}\n'
@@ -1247,7 +1247,7 @@ class TaskTests(unittest.TestCase):
             with self.subTest(live=live):
                 (self.root / 'completed').unlink(missing_ok=True)
                 result = subprocess.run(
-                    [str(self.bundle / 'tools/run-codex.sh'), str(self.root), '--task', 'test'],
+                    [str(self.bundle / 'orchestration/run-codex.sh'), str(self.root), '--task', 'test'],
                     env=dict(self.env, PATH=f'{self.root}:{self.env["PATH"]}',
                              CODEX_STARTER_KIT_LIVE_INSPECT=live),
                     capture_output=True, text=True, timeout=10)
@@ -1273,7 +1273,7 @@ class TaskTests(unittest.TestCase):
             'exit 7\n')
         codex.chmod(0o755)
         result = subprocess.run(
-            [str(self.bundle / 'tools/run-codex.sh'), str(project), '--task', 'quick task'],
+            [str(self.bundle / 'orchestration/run-codex.sh'), str(project), '--task', 'quick task'],
             env=dict(self.env, PATH=f'{self.root}:{self.env["PATH"]}',
                      CODEX_STARTER_KIT_LIVE_INSPECT='1'),
             capture_output=True, text=True, timeout=10)
@@ -1306,7 +1306,7 @@ class TaskTests(unittest.TestCase):
             with self.subTest(live=live, signal=number):
                 pid_file.unlink(missing_ok=True)
                 with subprocess.Popen(
-                    [str(self.bundle / 'tools/run-codex.sh'), str(self.root), '--task', 'cancel'],
+                    [str(self.bundle / 'orchestration/run-codex.sh'), str(self.root), '--task', 'cancel'],
                     env=dict(self.env, PATH=f'{self.root}:{self.env["PATH"]}',
                              CODEX_STARTER_KIT_NOTIFY_METADATA='0',
                              CODEX_STARTER_KIT_LIVE_INSPECT=live),
@@ -1344,7 +1344,7 @@ class TaskTests(unittest.TestCase):
                                 runner.communicate(timeout=3)
 
     def test_session_model_search_has_entry_and_byte_limits(self):
-        spec = importlib.util.spec_from_file_location('fixture_notice', SOURCE / 'tools/codex_notice.py')
+        spec = importlib.util.spec_from_file_location('fixture_notice', SOURCE / 'internal/codex_notice.py')
         notice = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(notice)
         session = '01234567-89ab-4def-8123-0123456789ab'
@@ -1369,7 +1369,7 @@ class TaskTests(unittest.TestCase):
         tty.setraw(slave)
         os.set_blocking(master, False)
         entry = Path(os.ttyname(slave)).name
-        registry_script = self.bundle / 'tools/task_registry.py'
+        registry_script = self.bundle / 'internal/task_registry.py'
         registry_script.write_text(registry_script.read_text().replace('entries = []', f'entries = [{entry!r}]'))
         session = '01234567-89ab-4def-8123-0123456789ab'
         home = self.root / 'codex-home'
@@ -1410,7 +1410,7 @@ class TaskTests(unittest.TestCase):
                 if setting == '1':
                     env['CODEX_STARTER_KIT_LIMIT_REMINDER'] = '1'
                 result = subprocess.run(
-                    [str(self.bundle / 'tools/run-codex.sh'), str(self.root), '--task', task],
+                    [str(self.bundle / 'orchestration/run-codex.sh'), str(self.root), '--task', task],
                     env=env,
                     capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode, code, result.stderr)
@@ -1490,7 +1490,7 @@ class TaskTests(unittest.TestCase):
         os.mkfifo(sessions / 'pipe.jsonl')
 
         def finish_codex():
-            script = str(self.bundle / 'tools/notify-task-done.sh')
+            script = str(self.bundle / 'orchestration/notify-task-done.sh')
             start = subprocess.run([script, 'start', 'p', 'quota check', str(os.getpid())],
                                    env=self.env, text=True, capture_output=True, timeout=5)
             self.assertEqual(start.returncode, 0, start.stderr)
@@ -1520,7 +1520,7 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(finish_codex()[1:], ['Codex usage: unavailable'])
 
     def quota_module(self):
-        spec = importlib.util.spec_from_file_location('codex_notice', SOURCE / 'tools/codex_notice.py')
+        spec = importlib.util.spec_from_file_location('codex_notice', SOURCE / 'internal/codex_notice.py')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module
@@ -1558,7 +1558,7 @@ class TaskTests(unittest.TestCase):
         self.env['CODEX_STARTER_KIT_LIMIT_REMINDER'] = '1'
         self.write_quota_session('rollout.jsonl', [
             self.quota_event(datetime.now(timezone.utc) - timedelta(seconds=5))])
-        script = str(self.bundle / 'tools/notify-task-done.sh')
+        script = str(self.bundle / 'orchestration/notify-task-done.sh')
         starts = [subprocess.run([script, 'start', 'p', 'quota check', str(os.getpid())],
                                  env=self.env, text=True, capture_output=True, timeout=5)
                   for _ in range(4)]
@@ -1603,7 +1603,7 @@ class TaskTests(unittest.TestCase):
         codex.chmod(0o755)
         self.env['PATH'] = f'{self.root}:{self.env["PATH"]}'
         result = subprocess.run(
-            [str(self.bundle / 'tools/run-codex.sh'), str(self.root), '--task', 'fallback'],
+            [str(self.bundle / 'orchestration/run-codex.sh'), str(self.root), '--task', 'fallback'],
             env=self.env, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 6, result.stderr)
         self.assertTrue(result.stdout.startswith('fallback\n'))
@@ -1612,7 +1612,7 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(self.state(), {})
 
     def test_terminal_payload_owner_and_bell(self):
-        spec = importlib.util.spec_from_file_location('notify', SOURCE / 'tools/task_registry.py')
+        spec = importlib.util.spec_from_file_location('notify', SOURCE / 'internal/task_registry.py')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         master, slave = pty.openpty()

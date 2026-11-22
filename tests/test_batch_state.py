@@ -9,14 +9,14 @@ import unittest
 from unittest.mock import patch
 
 
-TOOLS = Path(__file__).resolve().parents[1] / 'bootstrap/tools'
+INTERNAL = Path(__file__).resolve().parents[1] / 'bootstrap/internal'
 
 
 class BatchStateTests(unittest.TestCase):
     def setUp(self):
-        spec = importlib.util.spec_from_file_location('batch_state', TOOLS / 'batch_state.py')
+        spec = importlib.util.spec_from_file_location('batch_state', INTERNAL / 'batch_state.py')
         self.module = importlib.util.module_from_spec(spec)
-        with patch.object(sys, 'path', [str(TOOLS), *sys.path]):
+        with patch.object(sys, 'path', [str(INTERNAL), *sys.path]):
             spec.loader.exec_module(self.module)
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

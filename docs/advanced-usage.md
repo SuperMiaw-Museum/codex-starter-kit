@@ -60,10 +60,13 @@ CODEX_STARTER_KIT_SHOW_FULL_PROMPT=1 ./bootstrap/remote-control.sh --once
 
 ## Resume a Codex session
 
-To continue a previous Codex task, use its session ID (shown in the END notification) with `--resume`:
+Ask ChatGPT to continue a previous Codex task and provide the session ID from
+the END notification. ChatGPT reads
+`bootstrap/orchestration/PROMPT.EXTENSION.RESUME.md` and invokes the runner with
+`--resume`:
 
 ```bash
-./bootstrap/tools/run-codex.sh /path/to/project --resume SESSION_ID --task "Continue the previous task."
+./bootstrap/orchestration/run-codex.sh /path/to/project --resume SESSION_ID --task "Continue the previous task."
 ```
 
 The session must already exist locally. An invalid or unavailable session fails rather than silently starting a new one. Omit `--resume` to start a fresh session.

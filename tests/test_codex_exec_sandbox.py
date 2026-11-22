@@ -155,7 +155,7 @@ class RealCodexExecTests(unittest.TestCase):
             root = Path(temporary)
             bundle = root / 'bootstrap'
             shutil.copytree(BOOTSTRAP, bundle)
-            runner_source = bundle / 'tools/run_codex.py'
+            runner_source = bundle / 'internal/run_codex.py'
             runner_source.write_text(runner_source.read_text().replace(
                 '            project_lock.require_verified_execution_profile()',
                 '            pass  # isolated, intentionally unprotected protocol fixture'))
@@ -163,14 +163,14 @@ class RealCodexExecTests(unittest.TestCase):
             for directory in (project, home, state):
                 directory.mkdir(mode=0o700)
             locks = root / 'project-locks'
-            lock_source = bundle / 'tools/project_lock.py'
+            lock_source = bundle / 'internal/project_lock.py'
             lock_source.write_text(lock_source.read_text().replace(
                 "Path('/tmp') / f'codex-starter-kit-project-locks-{os.getuid()}'",
                 f'Path({str(locks)!r})'))
             spec = importlib.util.spec_from_file_location('fixture_lock', lock_source)
             locking = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(locking)
-            registry = bundle / 'tools/task_registry.py'
+            registry = bundle / 'internal/task_registry.py'
             registry.write_text(registry.read_text().replace(
                 "Path('/tmp') / f'codex-starter-kit-tasks-{os.getuid()}'",
                 f'Path({str(root / "registry")!r})').replace("entries = os.listdir('/dev/pts')", 'entries = []'))
@@ -188,7 +188,7 @@ class RealCodexExecTests(unittest.TestCase):
                 diagnostic = root / 'stderr'
                 output = root / 'stdout'
                 with output.open('w') as stdout, diagnostic.open('w') as stderr, subprocess.Popen(
-                    [str(bundle / 'tools/run-codex.sh'), '--attempt-id', 'offline',
+                    [str(bundle / 'orchestration/run-codex.sh'), '--attempt-id', 'offline',
                      '--receipt', str(receipt), str(project), '--task', 'Run the fixture command.'],
                     cwd=project, env=env, stdout=stdout, stderr=stderr,
                 ) as runner:

@@ -20,7 +20,10 @@ jobs:
         with:
           fetch-depth: 0
       - run: ./release.sh --check
-      - run: find bootstrap -type f -name '*.sh' -exec bash -n {} \;
+      - name: Check Bash syntax
+        run: >-
+          find . -path './.git' -prune -o -type f -name '*.sh'
+          -exec bash -c 'for script do bash -n "$script" || exit; done' _ {} +
 
   draft-release:
     needs: check

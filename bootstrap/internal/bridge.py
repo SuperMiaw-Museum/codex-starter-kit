@@ -6,10 +6,7 @@ import signal
 import subprocess
 import sys
 
-
-TOOLS = Path(__file__).resolve().parent
-sys.path.insert(0, str(TOOLS.parent))
-from remote_control import SERVICE, service_status, show_reminder
+from remote_control import BOOTSTRAP, SERVICE, service_status, show_reminder
 
 
 SESSION = 'desktop-commander'
@@ -32,12 +29,12 @@ def command_status(command, *, quiet=False):
 def with_toolchain(bash, command):
     # NVM is a shell script. The fixed shell adapter forwards arguments verbatim.
     return [bash, '-e', '-o', 'pipefail', '-c', 'source "$1"; shift; exec "$@"', 'bridge-environment',
-            str(TOOLS.parent / '.common-env.sh'), *command]
+            str(BOOTSTRAP / 'internal/.common-env.sh'), *command]
 
 
 def foreground(bash):
     try:
-        fd = os.open(TOOLS.parent, os.O_RDONLY | os.O_DIRECTORY)
+        fd = os.open(BOOTSTRAP, os.O_RDONLY | os.O_DIRECTORY)
     except OSError as error:
         print(error, file=sys.stderr)
         return 1
@@ -118,7 +115,7 @@ def main(bash, args):
     if mode == '--inside-tmux':
         return inside_tmux(bash)
     code = command_status(['tmux', 'new-session', '-d', '-s', SESSION,
-                           str(TOOLS / 'desktop-commander.sh'), '--inside-tmux'])
+                           str(BOOTSTRAP / 'internal/desktop-commander.sh'), '--inside-tmux'])
     if code:
         return code
     return command_status(['tmux', 'wait-for', EXIT_CHANNEL])

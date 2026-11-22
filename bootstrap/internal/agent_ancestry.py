@@ -7,6 +7,11 @@ import sys
 
 
 PROC = Path('/proc')
+# Recognize supervisors launched before an in-place bundle upgrade.
+AGENT_PYTHON_SCRIPTS = (
+    '/bootstrap/internal/run_codex.py', '/bootstrap/internal/bridge.py',
+    '/bootstrap/tools/run_codex.py', '/bootstrap/tools/bridge.py',
+)
 AGENTS = {
     'codex', 'codex-cli', 'desktop-commander', 'remote_desktop_commander',
     'remote-desktop-commander', 'run-codex.sh', 'desktop-commander.sh',
@@ -26,8 +31,7 @@ def is_agent(base):
         if len(argv) > index and argv[index] and not argv[index].startswith('-'):
             script = argv[index]
             return (Path(script).name in AGENTS
-                    or python and script.endswith(('/bootstrap/tools/run_codex.py',
-                                                   '/bootstrap/tools/bridge.py'))
+                    or python and script.endswith(AGENT_PYTHON_SCRIPTS)
                     or fnmatch.fnmatchcase(script, '*/@openai/codex/bin/codex.js')
                     or fnmatch.fnmatchcase(script, '*/@wonderwhy-er/desktop-commander/*'))
     return False

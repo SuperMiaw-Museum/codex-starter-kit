@@ -9,7 +9,7 @@ import sys
 import tempfile
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 VERSION_FILE = Path('bootstrap/version.txt')
 LEVELS = ('major', 'minor', 'patch')
 USAGE = """Usage: ./release.sh [--bump major|minor|patch] | --check | --help

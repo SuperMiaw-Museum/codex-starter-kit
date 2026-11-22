@@ -9,9 +9,9 @@ configurés pour le runner direct.
 ## Interface de commande
 
 ```text
-bootstrap/tools/batch.sh run MANIFEST
-bootstrap/tools/batch.sh status ID
-bootstrap/tools/batch.sh resume ID
+bootstrap/orchestration/batch.sh run MANIFEST
+bootstrap/orchestration/batch.sh status ID
+bootstrap/orchestration/batch.sh resume ID
 ```
 
 Le wrapper charge l’environnement commun, dont NVM s’il est présent, préserve

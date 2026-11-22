@@ -58,11 +58,11 @@ class BubblewrapRunnerTests(unittest.TestCase):
         self.state = Path(state.name)
         self.receipt = self.state / 'receipt.json'
         self.registry = self.root / 'registry'
-        registry = self.bundle / 'tools/task_registry.py'
+        registry = self.bundle / 'internal/task_registry.py'
         registry.write_text(registry.read_text().replace(
             "Path('/tmp') / f'codex-starter-kit-tasks-{os.getuid()}'", f'Path({str(self.registry)!r})'
         ).replace("entries = os.listdir('/dev/pts')", 'entries = []'))
-        locking = self.bundle / 'tools/project_lock.py'
+        locking = self.bundle / 'internal/project_lock.py'
         self.locks = self.root / 'locks'
         locking.write_text(locking.read_text().replace(
             "Path('/tmp') / f'codex-starter-kit-project-locks-{os.getuid()}'",
@@ -70,7 +70,7 @@ class BubblewrapRunnerTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('fixture_locking', locking)
         self.locking = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.locking)
-        self.runner = self.bundle / 'tools/run_codex.py'
+        self.runner = self.bundle / 'internal/run_codex.py'
         self.runner.write_text(self.runner.read_text().replace(
             '    sys.exit(main(sys.argv[1:]))', f'    LAUNCHER = {NPM!r}\n' + FACTORY))
         shutil.copy2(Path(__file__).with_name('test_codex_exec_sandbox.py'), self.project)
@@ -85,7 +85,7 @@ class BubblewrapRunnerTests(unittest.TestCase):
         self.env = dict(os.environ, CODEX_STARTER_KIT_LIVE_INSPECT='0', LOT6_SECRET_CANARY='hidden')
 
     def command(self, fd):
-        return [str(self.bundle / 'tools/run-codex.sh'), '--attempt-id', 'fixture',
+        return [str(self.bundle / 'orchestration/run-codex.sh'), '--attempt-id', 'fixture',
                 '--receipt', str(self.receipt), '--reservation-fd', str(fd), str(self.project),
                 '--task', 'Run the local fixture command.']
 

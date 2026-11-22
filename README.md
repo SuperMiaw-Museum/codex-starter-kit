@@ -24,3 +24,9 @@ Discuss your project with ChatGPT, then let it orchestrate Codex through
 
 For additional configuration and optional features, see
 [advanced usage](docs/advanced-usage.md).
+
+Human setup commands live directly in [bootstrap/](bootstrap/). Give ChatGPT
+[bootstrap/PROMPT.md](bootstrap/PROMPT.md) for the remote workflow. Its commands
+and optional prompt extensions live in [bootstrap/orchestration/](bootstrap/orchestration/),
+with their implementation in `bootstrap/internal/`. Repository maintainers use
+the root [release.sh](release.sh) command.

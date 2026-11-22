@@ -7,7 +7,7 @@ import sys
 from agent_ancestry import eligible
 
 
-BOOTSTRAP = Path(__file__).resolve().parent
+BOOTSTRAP = Path(__file__).resolve().parents[1]
 SERVICE = 'desktop-commander.service'
 
 
@@ -32,7 +32,7 @@ def show_reminder():
     print(f'Remote Desktop Commander: {service_status("inactive") or "unknown"}',
           file=sys.stderr, flush=True)
     try:
-        subprocess.run([str(BOOTSTRAP / 'tools/manual-task.sh'), 'status'], stdout=sys.stderr)
+        subprocess.run([str(BOOTSTRAP / 'orchestration/manual-task.sh'), 'status'], stdout=sys.stderr)
     except OSError:
         pass
     print(f'\n{accent}=== COPY THIS PROMPT INTO CHATGPT ==={reset}\n\n'
@@ -47,7 +47,7 @@ def main(invocation, args):
         if len(args) != 1:
             print(f'Usage: {invocation} --once', file=sys.stderr)
             return 2
-        wrapper = BOOTSTRAP / 'tools/desktop-commander.sh'
+        wrapper = BOOTSTRAP / 'internal/desktop-commander.sh'
         try:
             os.execv(wrapper, [str(wrapper), '--foreground'])
         except OSError as error:

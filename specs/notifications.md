@@ -1,13 +1,13 @@
 ## Task runner and notifications
 
 ```bash
-bootstrap/tools/run-codex.sh /absolute/project /absolute/task.txt
-bootstrap/tools/run-codex.sh /absolute/project --task "Read AGENTS.md and run the relevant checks."
-token=$(bootstrap/tools/manual-task.sh start project 'Requested manual work')
+bootstrap/orchestration/run-codex.sh /absolute/project /absolute/task.txt
+bootstrap/orchestration/run-codex.sh /absolute/project --task "Read AGENTS.md and run the relevant checks."
+token=$(bootstrap/orchestration/manual-task.sh start project 'Requested manual work')
 # Perform the requested work and capture its status immediately.
 result=$?
-bootstrap/tools/manual-task.sh end "$token" "$result"
-bootstrap/tools/manual-task.sh status
+bootstrap/orchestration/manual-task.sh end "$token" "$result"
+bootstrap/orchestration/manual-task.sh status
 ```
 
 The runner reads task instructions through stdin, loads NVM if present, uses the

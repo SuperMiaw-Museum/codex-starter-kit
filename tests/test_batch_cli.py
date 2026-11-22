@@ -41,19 +41,21 @@ class BatchCliTests(unittest.TestCase):
         (self.root / 'alias').symlink_to(self.project)
         self.home = self.root / 'home'
         self.home.mkdir()
-        self.tools = self.root / 'bundle/tools'
-        shutil.copytree(BOOTSTRAP, self.tools.parent, ignore=shutil.ignore_patterns('__pycache__'))
+        bundle = self.root / 'bundle'
+        self.internal = bundle / 'internal'
+        self.orchestration = bundle / 'orchestration'
+        shutil.copytree(BOOTSTRAP, bundle, ignore=shutil.ignore_patterns('__pycache__'))
         for filename, new in (
             ('project_lock.py', self.root / 'locks'),
             ('task_registry.py', self.root / 'registry'),
         ):
             new.mkdir(mode=0o700)
-            path = self.tools / filename
+            path = self.internal / filename
             source = path.read_text()
             old = "Path('/tmp') / f'codex-starter-kit-"
             self.assertIn(old, source)
             path.write_text(source.replace(old, f"Path({str(new)!r}) / f'codex-starter-kit-"))
-        registry = self.tools / 'task_registry.py'
+        registry = self.internal / 'task_registry.py'
         source = registry.read_text()
         self.assertIn("entries = os.listdir('/dev/pts')", source)
         registry.write_text(source.replace("entries = os.listdir('/dev/pts')", 'entries = []'))
@@ -66,7 +68,7 @@ class BatchCliTests(unittest.TestCase):
         self.store = self.home / '.codex-starter-kit-batches'
 
     def batch(self, *args, background=False):
-        command = [str(self.tools / 'batch.sh'), *map(str, args)]
+        command = [str(self.orchestration / 'batch.sh'), *map(str, args)]
         options = dict(cwd=self.root, env=self.env, text=True,
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if background:
@@ -81,7 +83,7 @@ class BatchCliTests(unittest.TestCase):
         child.communicate(timeout=8)
 
     def manual(self):
-        return subprocess.run([str(self.tools / 'run-codex.sh'), 'alias', '--task', 'manual'],
+        return subprocess.run([str(self.orchestration / 'run-codex.sh'), 'alias', '--task', 'manual'],
                               cwd=self.root, env=dict(self.env, CODEX_STARTER_KIT_LIVE_INSPECT='0'),
                               capture_output=True, text=True, timeout=10)
 
@@ -106,7 +108,7 @@ class BatchCliTests(unittest.TestCase):
         self.fail(f'Not observed: {path}')
 
     def test_sequence_resume_and_continuous_lock_between_tasks(self):
-        path = self.tools / 'batch.py'
+        path = self.internal / 'batch.py'
         path.write_text(path.read_text().replace(
             '                attempt.finish(result)',
             """                attempt.finish(result)
@@ -174,7 +176,7 @@ class BatchCliTests(unittest.TestCase):
         self.assertEqual((self.project / 'order').read_text(), 'wait\n')
 
     def test_kill_after_codex_exit_but_before_receipt_does_not_replay(self):
-        path = self.tools / 'batch.py'
+        path = self.internal / 'batch.py'
         path.write_text(path.read_text().replace(
             '                attempt.finish(result)',
             """                import time

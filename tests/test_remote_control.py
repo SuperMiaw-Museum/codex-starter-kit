@@ -36,7 +36,7 @@ class BootstrapTests(unittest.TestCase):
                         XDG_STATE_HOME=str(self.home / '.local/state'),
                         XDG_CONFIG_HOME=str(self.home / '.config'),
                         PATH=str(self.bin) + ':' + os.environ['PATH'], CALLS=str(self.calls))
-        registry = self.bundle / 'tools/task_registry.py'
+        registry = self.bundle / 'internal/task_registry.py'
         registry.write_text(registry.read_text().replace(
             "Path('/tmp') / f'codex-starter-kit-tasks-{os.getuid()}'",
             f'Path({str(self.root / "task-registry")!r})'))
@@ -44,9 +44,9 @@ class BootstrapTests(unittest.TestCase):
         self.proc = self.root / 'proc'
         self.proc.mkdir()
         self.process(10, '/usr/bin/bash', ['bash'], 1)
-        helper = self.bundle / 'agent_ancestry.py'
+        helper = self.bundle / 'internal/agent_ancestry.py'
         helper.write_text(helper.read_text().replace("Path('/proc')", f'Path({str(self.proc)!r})'))
-        reminder = self.bundle / 'remote_control.py'
+        reminder = self.bundle / 'internal/remote_control.py'
         reminder.write_text(reminder.read_text().replace('os.getppid()', '10'))
 
     def process(self, pid, executable, argv, parent, uid=1000):
@@ -123,7 +123,7 @@ class BootstrapTests(unittest.TestCase):
         self.env['NVM_DIR'] = str(nvm)
         self.stub('npx', '[[ $TEST_NVM_LOADED == yes ]] || exit 99; exit 23')
         self.stub('tmux', 'printf "%s\n" "$*" >> "$CALLS"')
-        result = self.run_script('tools/desktop-commander.sh', '--inside-tmux')
+        result = self.run_script('internal/desktop-commander.sh', '--inside-tmux')
         self.assertEqual(result.returncode, 23)
         self.assertEqual(self.calls.read_text(), 'wait-for -S desktop-commander-exit\n')
 
@@ -141,7 +141,7 @@ class BootstrapTests(unittest.TestCase):
         self.stub('tmux', f'exec {shlex.join(client)} "$@"')
         reached = self.root / 'fake-npx-ran'
         self.stub('npx', f'printf ran > {shlex.quote(str(reached))}; exit 23')
-        result = subprocess.run(['/bin/bash', str(self.bundle / 'tools/desktop-commander.sh')],
+        result = subprocess.run(['/bin/bash', str(self.bundle / 'internal/desktop-commander.sh')],
                                 env=self.env, capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(reached.read_text(), 'ran')
@@ -154,7 +154,7 @@ class BootstrapTests(unittest.TestCase):
         self.stub('npx', 'touch "$HOME/bridge-ready"; exec /bin/sleep 20')
         self.stub('tmux', 'printf "%s\n" "$*" >> "$CALLS"')
         with subprocess.Popen(
-            ['/bin/bash', str(self.bundle / 'tools/desktop-commander.sh'), '--inside-tmux'],
+            ['/bin/bash', str(self.bundle / 'internal/desktop-commander.sh'), '--inside-tmux'],
             env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
         ) as pane:
             try:
@@ -256,7 +256,7 @@ class BootstrapTests(unittest.TestCase):
         self.addCleanup(subprocess.run, [tmux, '-S', str(socket), 'kill-server'],
                         capture_output=True, timeout=5)
         result = subprocess.run(
-            ['/bin/bash', str(self.bundle / 'tools/desktop-commander.sh')],
+            ['/bin/bash', str(self.bundle / 'internal/desktop-commander.sh')],
             env=self.env, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, '')
@@ -267,11 +267,11 @@ class BootstrapTests(unittest.TestCase):
             result = self.run_script('remote-control.sh', *args)
             self.assertEqual((result.returncode, result.stdout), (2, ''))
             self.assertIn('Usage:', result.stderr)
-        self.assertEqual(self.run_script('agent-ancestry.sh', '10').returncode, 0)
+        self.assertEqual(self.run_script('internal/agent-ancestry.sh', '10').returncode, 0)
         self.process(10, '/usr/bin/bash', ['bash'], 20)
         self.process(20, '/usr/bin/bash', ['bash'], 10)
         for pid in ('10', '01', '-1', 'bad'):
-            result = self.run_script('agent-ancestry.sh', pid)
+            result = self.run_script('internal/agent-ancestry.sh', pid)
             self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', ''))
 
     def test_agent_ancestry(self):
@@ -281,6 +281,8 @@ class BootstrapTests(unittest.TestCase):
             ('/usr/bin/node', ['node', '/x/@wonderwhy-er/desktop-commander/dist/index.js', 'remote']),
             ('/usr/bin/bash', ['bash', '/x/run-codex.sh']),
             ('/usr/bin/remote_desktop_commander', ['remote_desktop_commander']),
+            ('/usr/bin/python3.13', ['python3', '-B', '/x/bootstrap/internal/run_codex.py']),
+            ('/usr/bin/python3.13', ['python3', '-B', '/x/bootstrap/internal/bridge.py']),
             ('/usr/bin/python3.13', ['python3', '-B', '/x/bootstrap/tools/run_codex.py']),
             ('/usr/bin/python3.13', ['python3', '-B', '/x/bootstrap/tools/bridge.py']),
         ):
