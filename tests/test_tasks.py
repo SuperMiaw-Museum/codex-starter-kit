@@ -9,8 +9,12 @@ import os
 from pathlib import Path
 import pty
 import re
+import shlex
 import shutil
+import signal
+import stat
 import subprocess
+import sys
 import tempfile
 import time
 import tty
@@ -28,12 +32,25 @@ class TaskTests(unittest.TestCase):
         self.bundle = self.root / 'bootstrap'
         shutil.copytree(SOURCE, self.bundle)
         self.registry = self.root / 'registry'
-        path = self.bundle / 'tools/task-registry.py'
-        code = path.read_text().replace("Path('/tmp') / f'codex-starter-kit-tasks-{os.getuid()}'", repr(str(self.registry)))
-        code = code.replace('ROOT = ', 'ROOT = Path(' , 1).replace('\nTTL =', ')\nTTL =', 1)
+        path = self.bundle / 'tools/task_registry.py'
+        code = path.read_text().replace("Path('/tmp') / f'codex-starter-kit-tasks-{os.getuid()}'",
+                                        f'Path({str(self.registry)!r})')
         # Isolated subprocesses never send notices to real user terminals.
         code = code.replace("entries = os.listdir('/dev/pts')", 'entries = []')
         path.write_text(code)
+        locking = self.bundle / 'tools/project_lock.py'
+        lock_parent = tempfile.TemporaryDirectory()
+        self.addCleanup(lock_parent.cleanup)
+        self.lock_root = Path(lock_parent.name) / 'project-locks'
+        locking.write_text(locking.read_text().replace(
+            "Path('/tmp') / f'codex-starter-kit-project-locks-{os.getuid()}'",
+            f'Path({str(self.lock_root)!r})'))
+        self.test_runner = self.bundle / 'tools/run_codex.py'
+        self.real_runner_source = self.test_runner.read_text()
+        # Protocol tests only. The production entry point has no override.
+        self.test_runner.write_text(self.real_runner_source.replace(
+            '            project_lock.require_verified_execution_profile()',
+            '            pass  # isolated protocol fixture'))
         self.env = dict(os.environ, HOME=str(self.root), NVM_DIR=str(self.root / 'nvm'))
         self.env.pop('CODEX_HOME', None)
         self.env.pop('CODEX_STARTER_KIT_SHOW_FULL_PROMPT', None)
@@ -54,24 +71,641 @@ class TaskTests(unittest.TestCase):
     def state(self):
         return json.loads((self.registry / 'tasks.json').read_text())
 
+    def registry_module(self):
+        spec = importlib.util.spec_from_file_location('tasks', self.bundle / 'tools/task_registry.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def project_lock_module(self):
+        spec = importlib.util.spec_from_file_location('project_lock', self.bundle / 'tools/project_lock.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def lock_runner(self, project, reservation=None):
+        args = [str(self.bundle / 'tools/run-codex.sh')]
+        if reservation is not None:
+            args += ['--reservation-fd', str(reservation)]
+        return args + [str(project), '--task', 'lock test']
+
+    def fake_lock_codex(self, body):
+        codex = self.root / 'codex'
+        codex.write_text(f'#!{sys.executable}\n' + body)
+        codex.chmod(0o755)
+        self.env.update(PATH=f'{self.root}:{self.env["PATH"]}', CODEX_STARTER_KIT_NOTIFY_METADATA='0')
+
+    def attempt_runner(self):
+        state = tempfile.TemporaryDirectory()
+        self.addCleanup(state.cleanup)
+        receipt = Path(state.name) / 'receipt.json'
+        runner, *args = self.lock_runner(self.root)
+        return [runner, '--attempt-id', 'test-attempt', '--receipt', str(receipt), *args], receipt
+
+    def test_unverified_profile_cannot_start_a_reserved_or_receipted_run(self):
+        self.test_runner.write_text(self.real_runner_source)
+        self.fake_lock_codex('raise SystemExit(99)\n')
+        self.env['CODEX_STARTER_KIT_VERIFIED_PROFILE'] = 'workspace-write'
+        command, receipt = self.attempt_runner()
+        with self.project_lock_module().reserve_project(self.root) as fd:
+            result = subprocess.run(self.lock_runner(self.root, fd), env=self.env,
+                                    pass_fds=(fd,), capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn('no verified isolation profile', result.stderr)
+        result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn('no verified isolation profile', result.stderr)
+        self.assertNotIn('START Codex', result.stderr)
+        self.assertEqual(list(receipt.parent.iterdir()), [])
+        self.assertFalse(self.registry.exists())
+
+    def test_runner_attempt_distinguishes_busy_from_codex_exit_75(self):
+        self.fake_lock_codex('print("SANDBOX_HANDOFF_EXIT_CODE=0")\nraise SystemExit(75)\n')
+        command, receipt = self.attempt_runner()
+        with self.project_lock_module().reserve_project(self.root):
+            started = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(started.returncode, 75, started.stderr)
+        self.assertNotIn('START Codex', started.stderr)
+        self.assertEqual(json.loads(receipt.read_bytes())['result']['kind'], 'busy')
+        self.assertIsNone(json.loads(receipt.read_bytes())['result']['process_exit'])
+
+        command, receipt = self.attempt_runner()
+        with self.project_lock_module().reserve_project(self.root) as fd:
+            command[5:5] = ['--reservation-fd', str(fd)]
+            started = subprocess.run(command, env=self.env, pass_fds=(fd,),
+                                     capture_output=True, text=True, timeout=5)
+            retry = subprocess.run(command, env=self.env, pass_fds=(fd,),
+                                   capture_output=True, text=True, timeout=5)
+        self.assertEqual(started.returncode, 75, started.stderr)
+        self.assertEqual(started.stderr.count('START Codex'), 1)
+        self.assertEqual(started.stdout.count('ERROR Codex'), 1)
+        record = json.loads(receipt.read_bytes())
+        self.assertEqual((record['attempt_id'], record['project']), ('test-attempt', str(self.root)))
+        self.assertEqual(record['result'], dict(kind='codex', exit_code=75, process_exit=75,
+                                               signal=None, stage=None, capture_failed=False))
+        self.assertEqual(retry.returncode, 2, retry.stderr)
+        self.assertNotIn('START Codex', retry.stderr)
+        self.assertEqual(json.loads(receipt.read_bytes()), record)
+
+    def test_runner_attempt_reports_launch_failure(self):
+        # An executable with an unavailable interpreter exists but exec fails.
+        self.fake_lock_codex('')
+        (self.root / 'codex').write_text('#!/nonexistent/test-interpreter\n')
+        command, receipt = self.attempt_runner()
+        result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 127, result.stderr)
+        self.assertEqual(result.stderr.count('START Codex'), 1)
+        self.assertEqual(result.stdout.count('ERROR Codex'), 1)
+        record = json.loads(receipt.read_bytes())['result']
+        self.assertEqual((record['kind'], record['stage'], record['process_exit']),
+                         ('infrastructure_error', 'launch', None))
+        self.assertEqual(self.state(), {})
+
+    def test_runner_attempt_signal_and_crash_windows(self):
+        self.fake_lock_codex(
+            'import pathlib, time\n'
+            'pathlib.Path("entered-codex").touch()\n'
+            'deadline = time.monotonic() + 5\n'
+            'while not pathlib.Path("release-codex").exists() and time.monotonic() < deadline:\n'
+            '    time.sleep(.02)\n')
+        module = self.project_lock_module()
+        for sent in (signal.SIGTERM, signal.SIGKILL):
+            with self.subTest(signal=sent):
+                for filename in ('entered-codex', 'release-codex'):
+                    (self.root / filename).unlink(missing_ok=True)
+                command, receipt = self.attempt_runner()
+                with subprocess.Popen(command, env=self.env, stdout=subprocess.DEVNULL,
+                                      stderr=subprocess.DEVNULL) as runner:
+                    try:
+                        deadline = time.monotonic() + 4
+                        while not (self.root / 'entered-codex').exists():
+                            self.assertIsNone(runner.poll())
+                            self.assertLess(time.monotonic(), deadline)
+                            time.sleep(.02)
+                        self.assertTrue(receipt.with_name('receipt.json.started').is_file())
+                        self.assertFalse(receipt.exists())
+                        runner.send_signal(sent)
+                        expected = 143 if sent == signal.SIGTERM else -signal.SIGKILL
+                        self.assertEqual(runner.wait(timeout=5), expected)
+                        if sent == signal.SIGTERM:
+                            result = json.loads(receipt.read_bytes())['result']
+                            self.assertEqual((result['kind'], result['signal'], result['process_exit']),
+                                             ('cancelled', signal.SIGTERM, -signal.SIGTERM))
+                        else:
+                            self.assertFalse(receipt.exists())
+                            with self.assertRaises(module.ProjectBusy):
+                                with module.reserve_project(self.root):
+                                    self.fail('Codex still holds the project')
+                    finally:
+                        (self.root / 'release-codex').touch()
+                        if runner.poll() is None:
+                            runner.kill()
+                            runner.wait(timeout=5)
+                deadline = time.monotonic() + 5
+                while True:
+                    try:
+                        with module.reserve_project(self.root):
+                            break
+                    except module.ProjectBusy:
+                        self.assertLess(time.monotonic(), deadline)
+                        time.sleep(.02)
+                    except module.ProjectUnknown:
+                        self.assertEqual(sent, signal.SIGKILL)
+                        break
+
+    def test_runner_crash_around_receipt_publication(self):
+        self.fake_lock_codex('raise SystemExit(0)\n')
+        state_module = self.bundle / 'tools/batch_state.py'
+        source = state_module.read_text()
+        write = '        write_state(self.receipt, dict(self.identity, result=asdict(result)), replace=False)'
+        self.assertIn(write, source)
+        barrier = ("        import time\n"
+                   "        self.receipt.with_name('at-publication').touch()\n"
+                   "        time.sleep(10)")
+        for published in (False, True):
+            with self.subTest(published=published):
+                lines = (write, barrier) if published else (barrier, write)
+                state_module.write_text(source.replace(write, '\n'.join(lines)))
+                command, receipt = self.attempt_runner()
+                with subprocess.Popen(command, env=self.env, stdout=subprocess.DEVNULL,
+                                      stderr=subprocess.DEVNULL) as runner:
+                    try:
+                        deadline = time.monotonic() + 5
+                        while not receipt.with_name('at-publication').exists():
+                            self.assertIsNone(runner.poll())
+                            self.assertLess(time.monotonic(), deadline)
+                            time.sleep(.02)
+                        self.assertEqual(self.state(), {})
+                        self.assertTrue(receipt.with_name('receipt.json.started').exists())
+                        self.assertEqual(receipt.exists(), published)
+                        if published:
+                            self.assertEqual(json.loads(receipt.read_bytes())['result']['process_exit'], 0)
+                    finally:
+                        if runner.poll() is None:
+                            runner.kill()
+                            runner.wait(timeout=5)
+
+    def test_project_reservation_spans_tasks_and_rejects_alias(self):
+        self.fake_lock_codex('import sys\nsys.stdin.read()\n')
+        project = self.root / 'project'
+        project.mkdir()
+        alias = self.root / 'alias'
+        alias.symlink_to(project, target_is_directory=True)
+        locking = self.project_lock_module()
+        with locking.reserve_project(project) as reservation:
+            for _ in range(2):
+                blocked = subprocess.run(self.lock_runner(alias), env=self.env,
+                                         capture_output=True, text=True, timeout=5)
+                self.assertEqual(blocked.returncode, locking.BUSY_EXIT, blocked.stderr)
+                self.assertIn('BUSY:', blocked.stderr)
+                self.assertNotIn('START Codex', blocked.stderr)
+                result = subprocess.run(self.lock_runner(alias, reservation), env=self.env,
+                                        pass_fds=(reservation,), capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('SANDBOX_HANDOFF_EXIT_CODE=0', result.stdout)
+            blocked = subprocess.run(self.lock_runner(project), env=self.env,
+                                     capture_output=True, text=True, timeout=5)
+            self.assertEqual(blocked.returncode, locking.BUSY_EXIT)
+            rejected = subprocess.run(self.lock_runner(self.root, reservation), env=self.env,
+                                      pass_fds=(reservation,), capture_output=True, text=True, timeout=5)
+            self.assertEqual(rejected.returncode, 2)
+        self.assertEqual(stat.S_IMODE(self.lock_root.stat().st_mode), 0o700)
+        inodes = {path.name: path.stat().st_ino for path in self.lock_root.iterdir()}
+        result = subprocess.run(self.lock_runner(project), env=self.env, capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(inodes, {path.name: path.stat().st_ino for path in self.lock_root.iterdir()})
+
+    def test_project_lock_requires_the_locked_open_description(self):
+        self.fake_lock_codex('raise SystemExit(99)\n')
+        locking = self.project_lock_module()
+        with locking.reserve_project(self.root):
+            path, = self.lock_root.glob('*.lock')
+            with path.open('rb') as separately_opened:
+                fd = separately_opened.fileno()
+                result = subprocess.run(self.lock_runner(self.root, fd), env=self.env,
+                                        pass_fds=(fd,), capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('does not hold an exclusive lock', result.stderr)
+        path.chmod(0o644)
+        result = subprocess.run(self.lock_runner(self.root), env=self.env,
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn('Unsafe project lock file', result.stderr)
+        self.assertFalse(self.registry.exists())
+        with self.assertRaisesRegex(ValueError, 'overlaps'):
+            with locking.reserve_project(self.lock_root.parent):
+                self.fail('Project must not contain the lock directory')
+
+    def test_concurrent_runners_cannot_share_a_project_or_reservation(self):
+        self.fake_lock_codex(
+            'import os, pathlib, time\n'
+            'control = pathlib.Path(os.environ["LOCK_TEST_CONTROL"])\n'
+            '(control / "ready").touch()\n'
+            'while not (control / "released").exists():\n'
+            '    time.sleep(.02)\n')
+        self.env['LOCK_TEST_CONTROL'] = str(self.root)
+        # Exercise the real checkout path with a fake launcher and isolated state.
+        project = SOURCE.parent
+        alias = self.root / 'relative-alias'
+        alias.symlink_to(project, target_is_directory=True)
+        locking = self.project_lock_module()
+
+        def check(reservation):
+            for name in ('ready', 'released'):
+                (self.root / name).unlink(missing_ok=True)
+            descriptors = () if reservation is None else (reservation,)
+            with subprocess.Popen(self.lock_runner(project, reservation), env=self.env,
+                                  pass_fds=descriptors, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  text=True) as original:
+                try:
+                    deadline = time.monotonic() + 5
+                    while not (self.root / 'ready').exists():
+                        self.assertIsNone(original.poll())
+                        self.assertLess(time.monotonic(), deadline)
+                        time.sleep(.02)
+                    blocked = subprocess.run(self.lock_runner(alias, reservation), env=self.env,
+                                             pass_fds=descriptors, capture_output=True, text=True, timeout=5)
+                    self.assertEqual(blocked.returncode, locking.BUSY_EXIT, blocked.stderr)
+                    self.assertNotIn('START Codex', blocked.stderr)
+                finally:
+                    (self.root / 'released').touch()
+                    try:
+                        _, errors = original.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        original.kill()
+                        original.communicate(timeout=5)
+                        raise
+                self.assertEqual(original.returncode, 0, errors)
+                self.assertEqual(self.state(), {})
+
+        check(None)
+        with locking.reserve_project(project) as reservation:
+            check(reservation)
+
+    def test_project_lock_survives_reservation_owner_runner_and_codex_exit(self):
+        self.fake_lock_codex(
+            'import os, pathlib, time\n'
+            'if pathlib.Path("released").exists():\n'
+            '    raise SystemExit(0)\n'
+            'pathlib.Path("leader").write_text(str(os.getpid()))\n'
+            'if os.fork() == 0:\n'
+            '    pathlib.Path("descendant").write_text(str(os.getpid()))\n'
+            '    while not pathlib.Path("released").exists():\n'
+            '        time.sleep(.02)\n'
+            'else:\n'
+            '    while not pathlib.Path("leader-exit").exists():\n'
+            '        time.sleep(.02)\n'
+            '    raise SystemExit(0)\n')
+        launcher = (
+            'import pathlib, subprocess, sys\n'
+            'sys.path.insert(0, sys.argv[1])\n'
+            'from project_lock import reserve_project\n'
+            'project = pathlib.Path(sys.argv[2])\n'
+            'with reserve_project(project) as fd:\n'
+            '    runner = subprocess.Popen([sys.argv[3], "--reservation-fd", str(fd), str(project),'
+            ' "--task", "survive"], pass_fds=(fd,))\n'
+            '    (project / "runner").write_text(str(runner.pid))\n'
+            '    runner.wait()\n')
+        owner = subprocess.Popen([sys.executable, '-B', '-c', launcher, str(self.bundle / 'tools'),
+                                  str(self.root), self.lock_runner(self.root)[0]], env=self.env,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        runner_pid = None
+        try:
+            deadline = time.monotonic() + 5
+            for name in ('runner', 'leader', 'descendant'):
+                path = self.root / name
+                while not path.exists() or not path.read_text():
+                    self.assertIsNone(owner.poll())
+                    self.assertLess(time.monotonic(), deadline)
+                    time.sleep(.02)
+                if name == 'runner':
+                    runner_pid = int(path.read_text())
+            owner.kill()
+            owner.wait(timeout=5)
+            os.kill(runner_pid, signal.SIGKILL)
+            for leader_alive in (True, False):
+                if not leader_alive:
+                    (self.root / 'leader-exit').touch()
+                    leader = int((self.root / 'leader').read_text())
+                    registry = self.registry_module()
+                    while registry.identity(leader) is not None:
+                        self.assertLess(time.monotonic(), deadline)
+                        time.sleep(.02)
+                blocked = subprocess.run(self.lock_runner(self.root), env=self.env,
+                                         capture_output=True, timeout=5)
+                self.assertEqual(blocked.returncode, 75, blocked.stderr)
+            (self.root / 'released').touch()
+            deadline = time.monotonic() + 5
+            while True:
+                result = subprocess.run(self.lock_runner(self.root), env=self.env,
+                                        capture_output=True, timeout=5)
+                if result.returncode != 75:
+                    break
+                self.assertLess(time.monotonic(), deadline)
+            self.assertEqual(result.returncode, 76, result.stderr)
+            self.assertIn(b'UNKNOWN:', result.stderr)
+        finally:
+            (self.root / 'leader-exit').touch()
+            (self.root / 'released').touch()
+            if owner.poll() is None:
+                owner.kill()
+                owner.wait(timeout=5)
+            if runner_pid is not None:
+                # Let any surviving runner finish before the fixture disappears.
+                deadline = time.monotonic() + 3
+                registry = self.registry_module()
+                while registry.identity(runner_pid) is not None and time.monotonic() < deadline:
+                    time.sleep(.02)
+
+    def test_direct_detached_descendant_without_fds_fences_project(self):
+        self.fake_lock_codex(
+            'import os, pathlib, time\n'
+            'if os.fork():\n'
+            '    raise SystemExit(0)\n'
+            'os.setsid()\n'
+            'os.closerange(3, 4096)\n'
+            'for fd in (0, 1, 2):\n'
+            '    os.close(fd)\n'
+            'pathlib.Path("detached-ready").touch()\n'
+            'deadline = time.monotonic() + 5\n'
+            'while not pathlib.Path("detach-release").exists() and time.monotonic() < deadline:\n'
+            '    time.sleep(.02)\n'
+            'pathlib.Path("detached-done").touch()\n')
+        command, receipt = self.attempt_runner()
+        locking = self.project_lock_module()
+        try:
+            result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 76, result.stderr)
+            self.assertTrue((self.root / 'detached-ready').exists())
+            self.assertFalse((self.root / 'detached-done').exists())
+            self.assertIn('project fenced', result.stderr)
+            self.assertEqual(result.stdout.count('ERROR Codex'), 1)
+            record = json.loads(receipt.read_bytes())['result']
+            self.assertEqual((record['kind'], record['stage'], record['process_exit']),
+                             ('unknown', 'quiescence', 0))
+            with self.assertRaises(locking.ProjectUnknown):
+                with locking.reserve_project(self.root):
+                    self.fail('Detached subprocess can still write')
+        finally:
+            (self.root / 'detach-release').touch()
+            deadline = time.monotonic() + 3
+            while not (self.root / 'detached-done').exists() and time.monotonic() < deadline:
+                time.sleep(.02)
+        self.assertTrue((self.root / 'detached-done').exists())
+        with self.assertRaises(locking.ProjectUnknown):
+            with locking.reserve_project(self.root):
+                self.fail('A later caller cannot independently prove quiescence')
+        with patch.object(locking, 'boot_id', return_value=b'550e8400-e29b-41d4-a716-446655440000\n'):
+            with locking.reserve_project(self.root):
+                self.assertEqual(list(self.lock_root.glob('*.unknown')), [])
+
+    def test_direct_crash_retains_fence_without_inherited_fds(self):
+        self.fake_lock_codex(
+            'import os, pathlib, time\n'
+            'os.closerange(3, 4096)\n'
+            'pathlib.Path("writer-ready").touch()\n'
+            'deadline = time.monotonic() + 5\n'
+            'while not pathlib.Path("release-writer").exists() and time.monotonic() < deadline:\n'
+            '    time.sleep(.02)\n'
+            'pathlib.Path("writer-done").touch()\n')
+        command, receipt = self.attempt_runner()
+        with subprocess.Popen(command, env=self.env, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL) as runner:
+            try:
+                deadline = time.monotonic() + 4
+                while not (self.root / 'writer-ready').exists():
+                    self.assertIsNone(runner.poll())
+                    self.assertLess(time.monotonic(), deadline)
+                    time.sleep(.02)
+                runner.kill()
+                runner.wait(timeout=5)
+                self.assertFalse(receipt.exists())
+                self.assertFalse((self.root / 'writer-done').exists())
+                second, second_receipt = self.attempt_runner()
+                blocked = subprocess.run(second, env=self.env, capture_output=True, text=True, timeout=5)
+                self.assertEqual(blocked.returncode, 76, blocked.stderr)
+                self.assertNotIn('START Codex', blocked.stderr)
+                record = json.loads(second_receipt.read_bytes())['result']
+                self.assertEqual((record['kind'], record['stage']), ('unknown', 'admission'))
+            finally:
+                (self.root / 'release-writer').touch()
+                if runner.poll() is None:
+                    runner.kill()
+                    runner.wait(timeout=5)
+                deadline = time.monotonic() + 3
+                while not (self.root / 'writer-done').exists() and time.monotonic() < deadline:
+                    time.sleep(.02)
+
+    def test_direct_reaps_detached_child_before_reporting_success(self):
+        self.fake_lock_codex(
+            'import os, pathlib\n'
+            'if os.fork():\n'
+            '    raise SystemExit(0)\n'
+            'os.setsid()\n'
+            'os.closerange(3, 4096)\n'
+            'pathlib.Path("detached-done").touch()\n')
+        command, receipt = self.attempt_runner()
+        result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.root / 'detached-done').exists())
+        self.assertEqual(json.loads(receipt.read_bytes())['result']['kind'], 'codex')
+        with self.project_lock_module().reserve_project(self.root):
+            self.assertEqual(list(self.lock_root.glob('*.unknown')), [])
+
+    def test_direct_allows_short_waitable_descendants_to_finish(self):
+        self.fake_lock_codex(
+            'import os, pathlib, time\n'
+            'if os.fork():\n'
+            '    raise SystemExit(0)\n'
+            'os.setsid()\n'
+            'os.closerange(3, 4096)\n'
+            'time.sleep(1.25)\n'
+            'pathlib.Path("late-exit").touch()\n')
+        command, receipt = self.attempt_runner()
+        result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=6)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.root / 'late-exit').exists())
+        self.assertEqual(json.loads(receipt.read_bytes())['result']['kind'], 'codex')
+        with self.project_lock_module().reserve_project(self.root):
+            self.assertEqual(list(self.lock_root.glob('*.unknown')), [])
+
+    @unittest.skipUnless(os.environ.get('CODEX_TEST_REAL_NPM') and os.environ.get('CODEX_TEST_REAL_NATIVE'),
+                         'requires explicitly supplied local Codex launcher paths')
+    def test_real_sandbox_launchers_and_fence(self):
+        def describe_tree(pid, depth=0):
+            base = Path(f'/proc/{pid}')
+            try:
+                name = (base / 'comm').read_text().strip()
+                children = set()
+                for thread in (base / 'task').iterdir():
+                    try:
+                        children.update((thread / 'children').read_text().split())
+                    except FileNotFoundError:
+                        continue
+                held = []
+                for entry in (base / 'fd').iterdir():
+                    try:
+                        target = os.readlink(entry)
+                    except FileNotFoundError:
+                        continue
+                    if target.startswith(str(self.lock_root) + '/') and target.endswith(('.lock', '.active')):
+                        held.append(target.rsplit('.', 1)[-1])
+                print(f'{"  " * depth}{name} sid={os.getsid(pid)} flock-fds={sorted(held)}', flush=True)
+            except OSError:
+                return
+            for child in sorted(children, key=int):
+                describe_tree(int(child), depth + 1)
+
+        for label, variable in (('npm', 'CODEX_TEST_REAL_NPM'), ('native', 'CODEX_TEST_REAL_NATIVE')):
+            for crash in (False, True):
+                with self.subTest(launcher=label, crash=crash):
+                    project = self.root / f'{label}-{crash}'
+                    project.mkdir()
+                    launcher = Path(os.environ[variable]).absolute()
+                    launcher_dir = Path(os.environ['CODEX_TEST_REAL_NPM']).absolute().parent
+                    control = project / 'sandbox_probe.py'
+                    control.write_text(
+                        'import json, os, pathlib, time\n'
+                        'fds = []\n'
+                        'for fd in os.listdir("/proc/self/fd"):\n'
+                        '    try:\n'
+                        '        target = os.readlink("/proc/self/fd/" + fd)\n'
+                        '    except FileNotFoundError:\n'
+                        '        continue\n'
+                        '    if target.endswith((".lock", ".active")) and "project-locks" in target:\n'
+                        '        fds.append(target.rsplit(".", 1)[-1])\n'
+                        'pathlib.Path("ready.tmp").write_text(json.dumps(sorted(fds)))\n'
+                        'pathlib.Path("ready.tmp").replace("ready")\n'
+                        'deadline = time.monotonic() + 6\n'
+                        'while not pathlib.Path("release").exists() and time.monotonic() < deadline:\n'
+                        '    time.sleep(.02)\n'
+                        'pathlib.Path("done").touch()\n')
+                    adapter = self.root / 'codex'
+                    adapter.write_text('#!/bin/bash\nexec ' + shlex.join([
+                        str(launcher), 'sandbox', '-P', ':workspace', '-C', str(project),
+                        '--', sys.executable, '-B', str(control),
+                    ]) + '\n')
+                    adapter.chmod(0o755)
+                    home = self.root / 'sandbox-home'
+                    home.mkdir(exist_ok=True)
+                    (home / '.codex').mkdir(exist_ok=True)
+                    env = dict(self.env, HOME=str(home), CODEX_HOME=str(home / '.codex'),
+                               PATH=os.pathsep.join([str(self.root), str(launcher_dir), self.env['PATH']]),
+                               CODEX_STARTER_KIT_NOTIFY_METADATA='0')
+                    locking = self.project_lock_module()
+                    with subprocess.Popen(self.lock_runner(project), env=env, stdout=subprocess.DEVNULL,
+                                          stderr=subprocess.PIPE, text=True) as runner:
+                        try:
+                            deadline = time.monotonic() + 5
+                            while not (project / 'ready').exists():
+                                if runner.poll() is not None:
+                                    self.fail(runner.stderr.read())
+                                self.assertLess(time.monotonic(), deadline)
+                                time.sleep(.02)
+                            fds = json.loads((project / 'ready').read_bytes())
+                            print(f'Codex sandbox {label}: inherited flock descriptors={fds}', flush=True)
+                            describe_tree(runner.pid)
+                            if crash:
+                                runner.kill()
+                                runner.wait(timeout=5)
+                                self.assertFalse((project / 'done').exists())
+                                with self.assertRaises((locking.ProjectBusy, locking.ProjectUnknown)):
+                                    with locking.reserve_project(project):
+                                        self.fail('Sandbox process can still write')
+                            (project / 'release').touch()
+                            if not crash:
+                                _, errors = runner.communicate(timeout=8)
+                                self.assertEqual(runner.returncode, 0, errors)
+                                with locking.reserve_project(project):
+                                    self.assertTrue((project / 'done').exists())
+                        finally:
+                            (project / 'release').touch()
+                            if runner.poll() is None:
+                                runner.kill()
+                                runner.wait(timeout=5)
+                            deadline = time.monotonic() + 4
+                            while not (project / 'done').exists() and time.monotonic() < deadline:
+                                time.sleep(.02)
+                    self.assertTrue((project / 'done').exists())
+                    if crash:
+                        deadline = time.monotonic() + 4
+                        while True:
+                            try:
+                                with locking.reserve_project(project):
+                                    self.fail('Crash fence must persist')
+                            except locking.ProjectBusy:
+                                self.assertLess(time.monotonic(), deadline)
+                                time.sleep(.02)
+                            except locking.ProjectUnknown:
+                                break
+
+    def test_registry_api_preserves_cwd_umask_and_cli_tokens(self):
+        registry = self.registry_module()
+        cwd = Path.cwd()
+        old_mask = os.umask(0o777)
+        try:
+            with patch.object(os, 'umask', side_effect=AssertionError('changed process umask')):
+                self.assertIsNone(registry.status())
+                self.assertFalse(self.registry.exists())
+                token = registry.start('project', 'from Python')
+                active, stale_count = registry.status()
+                self.assertEqual((active[0]['label'], stale_count), ('from Python', 0))
+                for name, mode in (('.', 0o700), ('lock', 0o600), ('tasks.json', 0o600)):
+                    self.assertEqual(stat.S_IMODE((self.registry / name).stat().st_mode), mode)
+                self.assertEqual(Path.cwd(), cwd)
+                self.assertEqual(self.run_task('end', token, '0').returncode, 0)
+                token = self.start('from CLI').stdout.strip()
+                registry.end(token, 0)
+                self.assertEqual(registry.status(), ([], 0))
+                with self.assertRaises(registry.UnknownTask):
+                    registry.end(token, 0)
+                self.assertEqual(Path.cwd(), cwd)
+        finally:
+            current_mask = os.umask(old_mask)
+        self.assertEqual(current_mask, 0o777)
+
+    def test_manual_cli_preserves_usage_and_rejects_extended_arguments(self):
+        for args in (('start', 'p', 'l', str(os.getpid())),
+                     ('end', 'a' * 32, '0', 'metadata'), ('status', 'extra')):
+            result = self.run_task(*args)
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', ''))
+        result = self.run_task()
+        self.assertEqual((result.returncode, result.stdout), (2, ''))
+        self.assertTrue(result.stderr.startswith('Usage: manual-task.sh '))
+        self.assertFalse(self.registry.exists())
+
     def test_format_validation_and_end_failure(self):
         start = self.start('hello\n\x1b[31m' + 'x' * 200)
-        self.assertIn('🤖 1 🚀 START Manual [project] — hello ', start.stderr)
+        self.assertIn('🤖 1 🚀 START ChatGPT [project] — hello ', start.stderr)
         self.assertNotIn('\x1b', start.stderr)
         token = start.stdout.strip()
         self.assertEqual(self.run_task('end', token, '256').returncode, 2)
         self.assertEqual(len(self.state()), 1)
         result = self.run_task('end', token, '7')
         self.assertEqual(result.returncode, 0)
-        self.assertRegex(result.stdout, r'🤖 0 ❌ ERROR Manual \[project\] \(\d+s\)')
+        self.assertRegex(result.stdout, r'🤖 0 ❌ ERROR ChatGPT \[project\] \(\d+s\)')
         self.assertEqual(self.run_task('end', token, '0').returncode, 3)
         self.assertIn('🤖 0 active tasks', self.run_task('status').stdout)
+
+    def test_manual_notice_preserves_absolute_path_and_format(self):
+        project = str(self.root / 'project with spaces')
+        started = self.run_task('start', project, 'Task description')
+        self.assertEqual(started.returncode, 0, started.stderr)
+        timestamp = r'\[\d{2}:\d{2}:\d{2}\]'
+        path = re.escape(project)
+        self.assertRegex(started.stderr,
+                         rf'^{timestamp} 🤖 1 🚀 START ChatGPT \[{path}\] — Task description\n\Z')
+        token = started.stdout.strip()
+        self.assertEqual(self.state()[token]['mode'], 'Manual')
+        ended = self.run_task('end', token, '0')
+        self.assertEqual(ended.returncode, 0, ended.stderr)
+        self.assertRegex(ended.stdout, rf'^{timestamp} 🤖 0 ✅ END ChatGPT \[{path}\] \(\d+s\)\n\Z')
 
     def test_manual_full_prompt_format(self):
         self.env['CODEX_STARTER_KIT_SHOW_FULL_PROMPT'] = '1'
         label = 'Short manual task\nwith details'
         result = self.start(label)
-        self.assertRegex(result.stderr, r'🚀 START Manual \[project\]\n$')
+        self.assertRegex(result.stderr, r'🚀 START ChatGPT \[project\]\n$')
         self.assertNotIn(label, result.stderr)
         self.assertEqual(self.state()[result.stdout.strip()]['label'], 'Short manual task with details')
         self.assertEqual(self.run_task('end', result.stdout.strip(), '0').returncode, 0)
@@ -168,11 +802,12 @@ class TaskTests(unittest.TestCase):
 
     def test_mixed_transitions_deliver_in_commit_order(self):
         # Record what delivery sees while the cross-process lock is held.
-        path = self.bundle / 'tools/task-registry.py'
+        path = self.bundle / 'tools/task_registry.py'
         path.write_text(path.read_text().replace(
             '    # Broken stdout',
-            "    with open('events.jsonl', 'a') as log:\n"
-            "        log.write(json.dumps([phase, len(read_state()), message]) + '\\n')\n"
+            "    with (ROOT / 'events.jsonl').open('a') as log:\n"
+            "        count = len(json.loads((ROOT / 'tasks.json').read_text()))\n"
+            "        log.write(json.dumps([phase, count, message]) + '\\n')\n"
             '    # Broken stdout'))
         tokens = [self.start().stdout.strip() for _ in range(10)]
         def transition(index):
@@ -210,6 +845,59 @@ class TaskTests(unittest.TestCase):
             self.assertEqual(result.stdout, '')
             self.assertEqual(path.read_bytes(), before)
 
+    def test_deeply_nested_registry_keeps_runner_best_effort(self):
+        self.start()
+        path = self.registry / 'tasks.json'
+        malformed = b'[' * 10000 + b'0' + b']' * 10000
+        path.write_bytes(malformed)
+        status = self.run_task('status')
+        self.assertEqual(status.returncode, 2, status.stderr)
+        self.assertNotIn('Traceback', status.stderr)
+
+        codex = self.root / 'codex'
+        codex.write_text('#!/bin/bash\ncat >/dev/null\nexit 7\n')
+        codex.chmod(0o755)
+        result = subprocess.run(
+            [str(self.bundle / 'tools/run-codex.sh'), str(self.root), '--task', 'run anyway'],
+            env=dict(self.env, PATH=f'{self.root}:{self.env["PATH"]}',
+                     CODEX_STARTER_KIT_NOTIFY_METADATA='0'),
+            capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assertEqual(result.stdout, 'SANDBOX_HANDOFF_EXIT_CODE=7\n')
+        self.assertNotIn('Traceback', result.stderr)
+        self.assertEqual(path.read_bytes(), malformed)
+
+    def test_nonregular_notice_logs_do_not_block_end(self):
+        notifier = str(self.bundle / 'tools/notify-task-done.sh')
+        home = self.root / '.codex'
+        directory = home / 'sessions/2026/11/22'
+        directory.mkdir(parents=True)
+        session = '01234567-89ab-4def-8123-0123456789ab'
+        os.mkfifo(directory / f'rollout-test-{session}.jsonl')
+        metadata = self.root / 'metadata.jsonl'
+        metadata.write_text(json.dumps({'session': session}) + '\n')
+        fifo = self.root / 'metadata.fifo'
+        os.mkfifo(fifo)
+        for path in (fifo, metadata):
+            with self.subTest(path=path.name):
+                start = subprocess.run([notifier, 'start', 'p', 'task', str(os.getpid())],
+                                       env=self.env, capture_output=True, text=True, timeout=5)
+                self.assertEqual(start.returncode, 0, start.stderr)
+                end = subprocess.run([notifier, 'end', start.stdout.strip(), '0', str(path)],
+                                     env=self.env, capture_output=True, text=True, timeout=2)
+                self.assertEqual(end.returncode, 0, end.stderr)
+                self.assertIn('✅ END Codex', end.stdout)
+                if path == metadata:
+                    self.assertIn(f'session: {session}', end.stdout)
+                self.assertEqual(self.state(), {})
+
+    def test_end_with_ascii_stdout_does_not_report_registry_failure(self):
+        token = self.start().stdout.strip()
+        self.env['PYTHONIOENCODING'] = 'ascii'
+        result = self.run_task('end', token, '0')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.state(), {})
+
     def test_reused_pid_and_stale_end(self):
         token = self.start().stdout.strip()
         state = self.state()
@@ -231,18 +919,14 @@ class TaskTests(unittest.TestCase):
         token = self.start().stdout.strip()
         other = self.start().stdout.strip()
         # A write failure must preserve the original task for retry.
-        spec = importlib.util.spec_from_file_location('tasks', self.bundle / 'tools/task-registry.py')
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        module = self.registry_module()
         cwd = os.getcwd()
-        try:
-            with patch.object(module.os, 'replace', side_effect=OSError('write failed')):
-                with patch.object(module, 'deliver') as delivered:
-                    with self.assertRaises(OSError):
-                        module.main(['end', token, '0'])
-                    delivered.assert_not_called()
-        finally:
-            os.chdir(cwd)
+        with patch.object(module.os, 'replace', side_effect=OSError('write failed')):
+            with patch.object(module, 'deliver') as delivered:
+                with self.assertRaises(OSError):
+                    module.end(token, 0, notify=delivered)
+                delivered.assert_not_called()
+        self.assertEqual(os.getcwd(), cwd)
         self.assertIn(token, self.state())
         self.assertEqual(self.run_task('end', token, '0').returncode, 0)
         self.assertEqual(set(self.state()), {other})
@@ -271,7 +955,7 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(len(self.state()), 1)
 
     def test_live_inspection_requires_tmux(self):
-        for name in ('bash', 'basename', 'dirname'):
+        for name in ('bash', 'dirname', 'python3'):
             (self.root / name).symlink_to(shutil.which(name))
         codex = self.root / 'codex'
         codex.write_text('#!/bin/bash\nexit 99\n')
@@ -438,7 +1122,7 @@ class TaskTests(unittest.TestCase):
         tty.setraw(slave)
         os.set_blocking(master, False)
         entry = Path(os.ttyname(slave)).name
-        registry_script = self.bundle / 'tools/task-registry.py'
+        registry_script = self.bundle / 'tools/task_registry.py'
         registry_script.write_text(registry_script.read_text().replace('entries = []', f'entries = [{entry!r}]'))
         bin_dir = self.root / 'bin'
         bin_dir.mkdir()
@@ -526,6 +1210,158 @@ class TaskTests(unittest.TestCase):
         self.assertIn('still runs', result.stdout)
         self.assertIn('SANDBOX_HANDOFF_EXIT_CODE=9', result.stdout)
 
+    def test_runner_large_relative_task_file_with_cdpath(self):
+        project = self.root / 'project with spaces'
+        project.mkdir()
+        body = ('Inspect this task.\n' + 'x' * (512 * 1024)).encode()
+        (self.root / 'task.txt').write_bytes(body + b'\n\n')
+        codex = self.root / 'codex'
+        codex.write_text('#!/bin/bash\ncat > received\n')
+        codex.chmod(0o755)
+        result = subprocess.run(
+            ['bootstrap/tools/run-codex.sh', project.name, '--task-file', 'task.txt'],
+            cwd=self.root,
+            env=dict(self.env, PATH=f'{self.root}:{self.env["PATH"]}', CDPATH=str(self.root)),
+            capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((project / 'received').read_bytes(), body + b'\n')
+        self.assertEqual(result.stderr.count('START Codex'), 1)
+        self.assertEqual(result.stdout.count('END Codex'), 1)
+        self.assertEqual(result.stdout.count('SANDBOX_HANDOFF_EXIT_CODE=0'), 1)
+        self.assertEqual(self.state(), {})
+
+    def test_runner_parser_failure_drains_stdout_and_keeps_codex_status(self):
+        parser = self.bundle / 'tools/codex_notice.py'
+        parser.write_text(parser.read_text().replace('capture(*sys.argv[1:])', 'sys.exit(23)'))
+        codex = self.root / 'codex'
+        codex.write_text(f'#!{sys.executable}\n'
+                         'import pathlib, sys\n'
+                         'if "--help" in sys.argv:\n'
+                         '    print("  --json")\n'
+                         '    sys.exit()\n'
+                         'sys.stdout.buffer.write(b"x" * (1024 * 1024))\n'
+                         'sys.stdout.buffer.flush()\n'
+                         'pathlib.Path("completed").touch()\n')
+        codex.chmod(0o755)
+        for live in ('0', '1') if shutil.which('tmux') else ('0',):
+            with self.subTest(live=live):
+                (self.root / 'completed').unlink(missing_ok=True)
+                result = subprocess.run(
+                    [str(self.bundle / 'tools/run-codex.sh'), str(self.root), '--task', 'test'],
+                    env=dict(self.env, PATH=f'{self.root}:{self.env["PATH"]}',
+                             CODEX_STARTER_KIT_LIVE_INSPECT=live),
+                    capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue((self.root / 'completed').exists())
+                self.assertIn('Codex output capture failed: parser exited with status 23', result.stderr)
+                self.assertEqual(result.stdout.count('SANDBOX_HANDOFF_EXIT_CODE=0'), 1)
+                self.assertEqual(result.stdout.count('END Codex'), 1)
+                self.assertEqual(self.state(), {})
+
+    @unittest.skipUnless(shutil.which('tmux'), 'tmux is required for the live integration test')
+    def test_live_inspection_preserves_fast_exit_and_session_marker(self):
+        project = self.root / 'project with spaces'
+        project.mkdir()
+        session = '01234567-89ab-4def-8123-0123456789ab'
+        codex = self.root / 'codex'
+        codex.write_text(
+            '#!/bin/bash\n'
+            'if [[ $2 == --help ]]; then echo "  --json"; exit; fi\n'
+            '[[ $(cat) == "quick task" ]] || exit 99\n'
+            '[[ ${PWD##*/} == "project with spaces" ]] || exit 98\n'
+            f"echo '{{\"type\":\"thread.started\",\"thread_id\":\"{session}\"}}'\n"
+            'exit 7\n')
+        codex.chmod(0o755)
+        result = subprocess.run(
+            [str(self.bundle / 'tools/run-codex.sh'), str(project), '--task', 'quick task'],
+            env=dict(self.env, PATH=f'{self.root}:{self.env["PATH"]}',
+                     CODEX_STARTER_KIT_LIVE_INSPECT='1'),
+            capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assertEqual(result.stderr.count('START Codex'), 1)
+        self.assertEqual(result.stdout.count(f'SANDBOX_HANDOFF_SESSION_ID={session}'), 1)
+        self.assertEqual(result.stdout.count('ERROR Codex'), 1)
+        self.assertTrue(result.stdout.endswith('SANDBOX_HANDOFF_EXIT_CODE=7\n'))
+        socket = re.search(r'tmux -S (\S+) attach -r', result.stdout)[1]
+        self.assertFalse(Path(socket).parent.exists())
+        self.assertEqual(self.state(), {})
+
+    def test_runner_cancels_persistent_descendants(self):
+        codex = self.root / 'codex'
+        codex.write_text(f'#!{sys.executable}\n'
+                         'import os, pathlib, signal, time\n'
+                         'for number in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):\n'
+                         '    signal.signal(number, signal.SIG_IGN)\n'
+                         'pid = os.fork()\n'
+                         'if not pid:\n'
+                         '    pathlib.Path("child-pid").write_text(str(os.getpid()))\n'
+                         'while True:\n'
+                         '    time.sleep(1)\n')
+        codex.chmod(0o755)
+        cases = [('0', number) for number in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)]
+        if shutil.which('tmux'):
+            cases.append(('1', signal.SIGTERM))
+        pid_file = self.root / 'child-pid'
+        for live, number in cases:
+            with self.subTest(live=live, signal=number):
+                pid_file.unlink(missing_ok=True)
+                with subprocess.Popen(
+                    [str(self.bundle / 'tools/run-codex.sh'), str(self.root), '--task', 'cancel'],
+                    env=dict(self.env, PATH=f'{self.root}:{self.env["PATH"]}',
+                             CODEX_STARTER_KIT_NOTIFY_METADATA='0',
+                             CODEX_STARTER_KIT_LIVE_INSPECT=live),
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                ) as runner:
+                    try:
+                        deadline = time.monotonic() + 4
+                        while not pid_file.exists() or not pid_file.read_text().strip():
+                            if time.monotonic() >= deadline or runner.poll() is not None:
+                                self.fail('Codex descendant did not start')
+                            time.sleep(0.02)
+                        pid = int(pid_file.read_text())
+                        runner.send_signal(number)
+                        out, err = runner.communicate(timeout=6)
+                        self.assertEqual(runner.returncode, 128 + number, err)
+                        self.assertEqual(err.count('START Codex'), 1)
+                        self.assertEqual(out.count('ERROR Codex'), 1)
+                        self.assertEqual(out.count(f'SANDBOX_HANDOFF_EXIT_CODE={128 + number}'), 1)
+                        self.assertEqual(self.state(), {})
+                        registry = self.registry_module()
+                        deadline = time.monotonic() + 2
+                        while registry.identity(pid) is not None and time.monotonic() < deadline:
+                            time.sleep(0.02)
+                        self.assertIsNone(registry.identity(pid))
+                        if live == '1':
+                            socket = re.search(r'tmux -S (\S+) attach -r', out)[1]
+                            self.assertFalse(Path(socket).parent.exists())
+                    finally:
+                        if runner.poll() is None:
+                            runner.terminate()
+                            try:
+                                runner.communicate(timeout=6)
+                            except subprocess.TimeoutExpired:
+                                runner.kill()
+                                runner.communicate(timeout=3)
+
+    def test_session_model_search_has_entry_and_byte_limits(self):
+        spec = importlib.util.spec_from_file_location('fixture_notice', SOURCE / 'tools/codex_notice.py')
+        notice = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(notice)
+        session = '01234567-89ab-4def-8123-0123456789ab'
+        home = self.root / 'model-home'
+        date = home / 'sessions/2026/11/17'
+        date.mkdir(parents=True)
+        rollout = date / f'rollout-test-{session}.jsonl'
+        header = json.dumps({'type': 'session_meta', 'payload': {'id': session}}) + '\n'
+        turn = json.dumps({'type': 'turn_context', 'payload': {'model': 'test-model'}}) + '\n'
+        rollout.write_text(header + '\n' * 512 + turn)
+        with patch.dict(os.environ, CODEX_HOME=str(home)):
+            self.assertEqual(notice.session_model(session), 'test-model')
+            with patch.object(notice, 'MODEL_MAX_BYTES', len(header) + 256):
+                self.assertIsNone(notice.session_model(session))
+            with patch.object(notice, 'MODEL_MAX_ENTRIES', 3):
+                self.assertIsNone(notice.session_model(session))
+
     def test_runner_broadcasts_metadata_by_default(self):
         master, slave = pty.openpty()
         self.addCleanup(os.close, master)
@@ -533,7 +1369,7 @@ class TaskTests(unittest.TestCase):
         tty.setraw(slave)
         os.set_blocking(master, False)
         entry = Path(os.ttyname(slave)).name
-        registry_script = self.bundle / 'tools/task-registry.py'
+        registry_script = self.bundle / 'tools/task_registry.py'
         registry_script.write_text(registry_script.read_text().replace('entries = []', f'entries = [{entry!r}]'))
         session = '01234567-89ab-4def-8123-0123456789ab'
         home = self.root / 'codex-home'
@@ -570,7 +1406,7 @@ class TaskTests(unittest.TestCase):
                     + '\n'.join(map(json.dumps, events)) + '\nEVENTS\n'
                     + ('kill -TERM "$PPID"\n' if code == 143 else f'exit {code}\n'))
                 codex.chmod(0o755)
-                env = dict(self.env, CODEX_STARTER_KIT_SHOW_FULL_PROMPT=setting)
+                env = dict(self.env, CODEX_STARTER_KIT_SHOW_FULL_PROMPT=setting, CODEX_HOME=home.name)
                 if setting == '1':
                     env['CODEX_STARTER_KIT_LIMIT_REMINDER'] = '1'
                 result = subprocess.run(
@@ -677,7 +1513,7 @@ class TaskTests(unittest.TestCase):
                     self.assertIn('87.5% remaining', lines[2])
 
         manual = self.run_task('end', self.start().stdout.strip(), '0')
-        self.assertRegex(manual.stdout, r'END Manual \[project\] \(\d+s\)\n\Z')
+        self.assertRegex(manual.stdout, r'END ChatGPT \[project\] \(\d+s\)\n\Z')
         sessions.rename(sessions.with_name('old-sessions'))
         self.assertIn('87.5% remaining', finish_codex()[2])
         self.env['CODEX_HOME'] = str(self.root / 'other-codex-home')
@@ -776,7 +1612,7 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(self.state(), {})
 
     def test_terminal_payload_owner_and_bell(self):
-        spec = importlib.util.spec_from_file_location('notify', SOURCE / 'tools/task-registry.py')
+        spec = importlib.util.spec_from_file_location('notify', SOURCE / 'tools/task_registry.py')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         master, slave = pty.openpty()

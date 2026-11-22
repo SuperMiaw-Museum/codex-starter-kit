@@ -12,4 +12,7 @@ Keep the terminal open while using the bridge. Press **Ctrl-C** to stop it; run 
 
 The launcher writes no kit configuration or state. npm may download the bridge package, ask for confirmation, and leave cache files or logs. The bridge also manages its own files.
 
-Run only one bridge instance at a time. Stop any existing instance before starting one-shot mode, and do not start the persistent service while it is running.
+Run only one bridge instance at a time. The one-shot lock applies to a single
+checkout. Coordinate starts across checkouts and with the persistent service.
+Stop any existing instance before starting one-shot mode, and do not start
+the persistent service while one-shot mode is running.

@@ -17,6 +17,8 @@ QUOTA_TAIL_BYTES = 256 * 1024
 QUOTA_MAX_DIRECTORIES = 24
 QUOTA_MAX_ENTRIES = 1024
 QUOTA_MAX_FILES = 24
+MODEL_MAX_ENTRIES = 1024
+MODEL_MAX_BYTES = 1024 * 1024
 QUOTA_CACHE_BYTES = 4096
 QUOTA_UNAVAILABLE = ('Codex usage: unavailable',)
 DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -191,6 +193,7 @@ def write_quota_cache(cache, home, snapshot):
                                          delete=False, encoding='utf-8') as stream:
             temporary = Path(stream.name)
             try:
+                os.fchmod(stream.fileno(), 0o600)
                 json.dump(dict(home=str(home), stamp=snapshot[0], windows=snapshot[1]), stream)
                 stream.close()
                 temporary.replace(cache)
@@ -239,7 +242,13 @@ def quota_reminder(home, cache):
     return tuple(lines)
 
 
-def capture(path, session_output=''):
+def terminal_text(value):
+    return ''.join(char if char.isprintable() or char in '\n\t'
+                   else char.encode('unicode_escape').decode('ascii') for char in value)
+
+
+def capture(path, session_output='', protected_output=''):
+    render = terminal_text if protected_output else str
     session = None
     with open(path, 'w', encoding='utf-8', buffering=1) as metadata:
         for event in events(sys.stdin.buffer):
@@ -268,11 +277,11 @@ def capture(path, session_output=''):
                 else:
                     continue
                 if isinstance(output, str):
-                    print(output, flush=True)
+                    print(render(output), flush=True)
             elif kind in ('error', 'turn.failed'):
                 error = event if kind == 'error' else event.get('error')
                 if isinstance(error, dict) and isinstance(error.get('message'), str):
-                    print(error['message'], file=sys.stderr, flush=True)
+                    print(render(error['message']), file=sys.stderr, flush=True)
     if session is not None:
         marker = f'SANDBOX_HANDOFF_SESSION_ID={session}'
         print(marker, flush=True)
@@ -280,30 +289,72 @@ def capture(path, session_output=''):
             Path(session_output).write_text(marker + '\n', encoding='utf-8')
 
 
-def session_model(session):
+def notice_log_fd(path, flags):
+    fd = os.open(path, flags | os.O_NONBLOCK | os.O_NOCTTY)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError('Notice logs must be regular files')
+    except OSError:
+        os.close(fd)
+        raise
+    return fd
+
+
+def session_model(session, cwd=None):
     home = Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex').expanduser()
-    for path in (home / 'sessions').glob(f'*/*/*/rollout-*-{session}.jsonl'):
-        with path.open('rb') as stream:
-            records = events(stream)
-            first = next(records, {})
-            meta = first.get('payload')
-            if (first.get('type') != 'session_meta' or not isinstance(meta, dict)
-                    or meta.get('id', meta.get('session_id')) != session):
-                continue
-            for record in records:
-                payload = record.get('payload')
-                if record.get('type') == 'turn_context' and isinstance(payload, dict):
-                    model = payload.get('model')
-                    if isinstance(model, str) and re.fullmatch(r'[A-Za-z0-9._:/-]{1,100}', model):
-                        return model
+    if cwd is not None:
+        home = cwd / home
+    remaining_entries = MODEL_MAX_ENTRIES
+    remaining_bytes = MODEL_MAX_BYTES
+    suffix = f'-{session}.jsonl'
+
+    def candidates(directory, depth):
+        nonlocal remaining_entries
+        try:
+            with os.scandir(directory) as entries:
+                while remaining_entries:
+                    entry = next(entries, None)
+                    if entry is None:
+                        break
+                    remaining_entries -= 1
+                    if depth and entry.is_dir(follow_symlinks=False):
+                        yield from candidates(entry.path, depth - 1)
+                    elif not depth and entry.name.startswith('rollout-') and entry.name.endswith(suffix):
+                        yield entry.path
+        except OSError:
+            return
+
+    for path in candidates(home / 'sessions', 3):
+        if not remaining_bytes:
+            break
+        try:
+            stream = open(path, 'rb', opener=notice_log_fd)
+        except OSError:
+            continue
+        with stream:
+            prefix = stream.read(remaining_bytes)
+        remaining_bytes -= len(prefix)
+        # Ignore an incomplete record at the byte limit or during an append.
+        records = events(prefix.split(b'\n')[:-1])
+        first = next(records, {})
+        meta = first.get('payload')
+        if (first.get('type') != 'session_meta' or not isinstance(meta, dict)
+                or meta.get('id', meta.get('session_id')) != session):
+            continue
+        for record in records:
+            payload = record.get('payload')
+            if record.get('type') == 'turn_context' and isinstance(payload, dict):
+                model = payload.get('model')
+                if isinstance(model, str) and re.fullmatch(r'[A-Za-z0-9._:/-]{1,100}', model):
+                    return model
     return None
 
 
-def notice_fields(path):
+def notice_fields(path, cwd=None):
     session = None
     tokens = None
     try:
-        with open(path, 'rb') as stream:
+        with open(path, 'rb', opener=notice_log_fd) as stream:
             for event in events(stream):
                 session = session_id(event.get('session')) or session
                 total = event.get('tokens')
@@ -314,7 +365,7 @@ def notice_fields(path):
     fields = []
     if session:
         try:
-            model = session_model(session)
+            model = session_model(session, cwd)
             if model:
                 fields.append(f'model: {model}')
         except (OSError, RuntimeError, ValueError):

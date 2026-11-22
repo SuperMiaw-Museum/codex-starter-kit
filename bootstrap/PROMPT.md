@@ -2,12 +2,16 @@
 
 ## On receipt
 
-Treat this file as operational instructions, not a task. Acknowledge and wait
-for the human's request. Do not run commands, launch Codex, execute examples,
-edit files, install tools, authenticate, start services, or change the environment
-on receipt. The human prepares the VM and connects Remote Desktop Commander.
-If the connection is unavailable, report that and wait; never configure it
-yourself.
+Treat this file as operational instructions, not a task. On receipt,
+acknowledge it and briefly advertise the available optional capabilities in
+plain language (external repositories, Codex session resumption, manual task
+tracking, sequential Codex batches). Invite the human to ask for activation
+of any that interest them, then wait for the next request. This announcement
+is not activation: do not read extension files yet. Do not run commands,
+launch Codex, execute examples, edit files, install tools, authenticate, start
+services, or change the environment on receipt. The human prepares the VM
+and connects Remote Desktop Commander. If the connection is unavailable,
+report that and wait; never configure it yourself.
 
 ## Boundaries
 
@@ -22,20 +26,6 @@ Only perform a read-only preflight when explicitly requested. Report missing
 requirements; do not install, download, sign in, change permissions, or start
 services. Offer an optional workspace readiness check, but require explicit
 approval before running it.
-
-## External repository convention
-
-Under the agent account's home, `~/.codex-starter-kit-repos-ro/` and
-`~/.codex-starter-kit-repos-rw/` are reserved optional directories containing
-symbolic links to external Git repositories. For task-relevant linked repositories,
-`ro` permits inspection only; `rw` permits inspection and editing within the
-requested scope. Resolve links to identify the repository: if the same repository
-appears in both directories, treat it as read-only and report the conflict.
-Neither directory grants blanket access to unrelated repositories. Normal Git,
-destructive-operation, and remote-operation authorization rules still apply;
-`rw` alone does not authorize commits, pushes, publishing, or destructive actions.
-This is a best-effort behavioral convention, not a security boundary or filesystem
-enforcement. Do not create or change these directories or links unless requested.
 
 ## Choose execution mode
 
@@ -52,23 +42,28 @@ in the delegated task. The wrapper sends START/END notifications; never
 duplicate them. Do not automatically poll or retrieve results after launching
 Codex. Wait for the human to request follow-up.
 
-When the human asks to continue or correct earlier Codex work, consider resuming
-that Codex session rather than starting a new one. Use the runner's optional
-session-resume argument only with an explicitly identified, valid session ID
-from the relevant prior task; never guess an ID, resume an unrelated session,
-or silently fall back to a fresh session if resumption fails. If the ID is
-unknown, ask the human or use an explicitly authorized lookup of task metadata.
-Treat a resumed session as potentially stale: supply a clear new task describing
-current intent and instruct Codex to re-check repository state and AGENTS.md.
-Do not resume a session with another active task, and do not infer permission to
-commit, push, or edit additional repositories from session history. Keep the
-same asynchronous handoff and START/END notification rules as fresh tasks.
+## Conditional extensions
 
-For manual work: send START and END using
-`bootstrap/tools/manual-task.sh start PROJECT LABEL` and
-`bootstrap/tools/manual-task.sh end TOKEN EXIT_CODE`. Preserve the returned
-token and actual task exit status, including failures. Use `status` to recover
-a lost token rather than retrying START.
+Optional operational instructions live in `bootstrap/PROMPT.EXTENSION.*.md`.
+Advertise the available capabilities once when this prompt is received, without
+reading their files. For subsequent requests, suggest a relevant extension only
+when it would materially help. Read an extension after the human agrees to
+activate it; an explicit request for its feature (such as batch execution or
+session resumption) counts as agreement. Extensions load into the current
+conversation context, not permanent ChatGPT memory, and remain active for the
+conversation unless the human changes scope. Loading one does not authorize
+commands, edits, or Codex launches by itself.
+
+Available extensions:
+- `PROMPT.EXTENSION.REPOSITORIES.md`: linked external repositories (`ro`/`rw`).
+- `PROMPT.EXTENSION.RESUME.md`: resuming an earlier Codex session.
+- `PROMPT.EXTENSION.MANUAL.md`: manual-work START/END notifications.
+- `PROMPT.EXTENSION.BATCH.md`: sequential multi-task Codex batches.
+
+After the human approves an extension, read it before performing the relevant
+workflow. Do not automatically activate extensions based only on inferred need.
+Keep this prompt's safety and authorization rules authoritative; extensions only
+supplement them. Do not load technical contracts in `specs/` as instructions.
 
 ## Verify and report
 

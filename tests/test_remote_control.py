@@ -4,8 +4,11 @@ import os
 from pathlib import Path
 import pty
 import shutil
+import shlex
+import signal
 import subprocess
 import tempfile
+import time
 import unittest
 
 SOURCE = Path(__file__).resolve().parents[1] / 'bootstrap'
@@ -18,6 +21,7 @@ class BootstrapTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.bundle = self.root / 'checkout with spaces' / 'bootstrap'
         shutil.copytree(SOURCE, self.bundle)
+        self.version = (self.bundle / 'version.txt').read_text().strip()
         self.home = self.root / 'home'
         self.home.mkdir()
         self.bin = self.root / 'bin'
@@ -32,24 +36,18 @@ class BootstrapTests(unittest.TestCase):
                         XDG_STATE_HOME=str(self.home / '.local/state'),
                         XDG_CONFIG_HOME=str(self.home / '.config'),
                         PATH=str(self.bin) + ':' + os.environ['PATH'], CALLS=str(self.calls))
-        registry = self.bundle / 'tools/task-registry.py'
+        registry = self.bundle / 'tools/task_registry.py'
         registry.write_text(registry.read_text().replace(
             "Path('/tmp') / f'codex-starter-kit-tasks-{os.getuid()}'",
             f'Path({str(self.root / "task-registry")!r})'))
-        # Isolate reminder state; deterministic Linux boot and process fixtures.
         self.state = self.root / 'state'
-        script = self.bundle / 'remote-control.sh'
-        script.write_text(script.read_text().replace(
-            '/tmp/codex-starter-kit-reminder-$UID', '"' + str(self.state) + '"'))
-        self.boot = self.root / 'boot-id'
-        self.boot.write_text('11111111-1111-1111-1111-111111111111\n')
-        script.write_text(script.read_text().replace('/proc/sys/kernel/random/boot_id', '"' + str(self.boot) + '"'))
         self.proc = self.root / 'proc'
         self.proc.mkdir()
         self.process(10, '/usr/bin/bash', ['bash'], 1)
-        helper = self.bundle / 'agent-ancestry.sh'
-        helper.write_text(helper.read_text().replace('proc=/proc', f'proc="{self.proc}"'))
-        script.write_text(script.read_text().replace('"$PPID"', '10'))
+        helper = self.bundle / 'agent_ancestry.py'
+        helper.write_text(helper.read_text().replace("Path('/proc')", f'Path({str(self.proc)!r})'))
+        reminder = self.bundle / 'remote_control.py'
+        reminder.write_text(reminder.read_text().replace('os.getppid()', '10'))
 
     def process(self, pid, executable, argv, parent, uid=1000):
         base = self.proc / str(pid)
@@ -100,7 +98,7 @@ class BootstrapTests(unittest.TestCase):
         result = self.run_script('remote-control.sh', '--show')
         self.assertEqual(result.returncode, 0)
         self.assertIn(f'Read "{self.bundle}/PROMPT.md"', result.stderr)
-        self.assertIn('CODEX STARTER KIT · 2.3.0', result.stderr)
+        self.assertIn(f'CODEX STARTER KIT · {self.version}', result.stderr)
         self.assertNotIn('\x1b[', result.stderr)
         self.assertFalse(self.state.exists())
 
@@ -116,7 +114,6 @@ class BootstrapTests(unittest.TestCase):
         outputs = [self.finish(pair) for pair in sessions]
         self.assertEqual(sum(b'COPY THIS PROMPT INTO CHATGPT' in out for out in outputs), 5)
         self.assertIn(b'COPY THIS PROMPT INTO CHATGPT', self.finish(self.automatic()))
-        self.boot.write_text('22222222-2222-2222-2222-222222222222\n')
         self.assertIn(b'COPY THIS PROMPT INTO CHATGPT', self.finish(self.automatic()))
 
     def test_bridge_helper_loads_nvm_and_signals_exit(self):
@@ -130,6 +127,51 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(result.returncode, 23)
         self.assertEqual(self.calls.read_text(), 'wait-for -S desktop-commander-exit\n')
 
+    @unittest.skipUnless(shutil.which('tmux'), 'requires local tmux')
+    def test_detached_bridge_signals_existing_server_with_stale_path(self):
+        executable = shutil.which('tmux')
+        socket = self.root / 'test.sock'
+        client = [executable, '-S', str(socket)]
+        server_env = dict(self.env, PATH='/nonexistent', SHELL='/bin/sh')
+        server_env.pop('TMUX', None)
+        subprocess.run([*client, '-f', '/dev/null', 'new-session', '-d', '-s', 'fixture',
+                        '/bin/sleep', '30'], env=server_env, check=True, timeout=5)
+        self.addCleanup(subprocess.run, [*client, 'kill-server'],
+                        capture_output=True, timeout=5)
+        self.stub('tmux', f'exec {shlex.join(client)} "$@"')
+        reached = self.root / 'fake-npx-ran'
+        self.stub('npx', f'printf ran > {shlex.quote(str(reached))}; exit 23')
+        result = subprocess.run(['/bin/bash', str(self.bundle / 'tools/desktop-commander.sh')],
+                                env=self.env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(reached.read_text(), 'ran')
+        server_path = subprocess.check_output([*client, 'show-environment', '-g', 'PATH'],
+                                              text=True, timeout=5)
+        self.assertEqual(server_path.strip(), 'PATH=/nonexistent')
+
+    def test_bridge_pane_forwards_termination_and_signals_waiter(self):
+        ready = self.home / 'bridge-ready'
+        self.stub('npx', 'touch "$HOME/bridge-ready"; exec /bin/sleep 20')
+        self.stub('tmux', 'printf "%s\n" "$*" >> "$CALLS"')
+        with subprocess.Popen(
+            ['/bin/bash', str(self.bundle / 'tools/desktop-commander.sh'), '--inside-tmux'],
+            env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+        ) as pane:
+            try:
+                deadline = time.monotonic() + 5
+                while not ready.exists():
+                    self.assertIsNone(pane.poll())
+                    self.assertLess(time.monotonic(), deadline)
+                    time.sleep(0.02)
+                pane.terminate()
+                pane.communicate(timeout=5)
+                self.assertEqual(pane.returncode, 143)
+                self.assertEqual(self.calls.read_text(), 'wait-for -S desktop-commander-exit\n')
+            finally:
+                if pane.poll() is None:
+                    os.killpg(pane.pid, signal.SIGKILL)
+                    pane.communicate(timeout=5)
+
     def test_one_shot_prints_reminder_before_foreground_bridge(self):
         nvm = self.home / '.nvm'
         nvm.mkdir()
@@ -142,7 +184,7 @@ class BootstrapTests(unittest.TestCase):
         result = self.run_script('remote-control.sh', '--once')
         self.assertEqual(result.returncode, 23)
         self.assertIn(f'Read "{self.bundle}/PROMPT.md"', result.stderr)
-        self.assertIn('CODEX STARTER KIT · 2.3.0', result.stderr)
+        self.assertIn(f'CODEX STARTER KIT · {self.version}', result.stderr)
         self.assertLess(result.stderr.index('COPY THIS PROMPT INTO CHATGPT'),
                         result.stderr.index('bridge: @wonderwhy-er/desktop-commander@latest remote'))
         self.assertEqual(list(self.home.iterdir()), [nvm])
@@ -176,6 +218,62 @@ class BootstrapTests(unittest.TestCase):
         self.assertFalse(self.calls.exists())
         self.assertFalse(self.state.exists())
 
+    def test_foreground_holds_lock_through_exec_and_releases_on_interrupt(self):
+        self.stub('systemctl', 'exit 3')
+        self.stub('tmux', 'exit 1')
+        self.stub('npx', 'echo "$$" > "$CALLS"; exec /bin/sleep 20')
+        with subprocess.Popen(
+            ['/bin/bash', str(self.bundle / 'remote-control.sh'), '--once'],
+            env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+        ) as bridge:
+            try:
+                deadline = time.monotonic() + 5
+                while not self.calls.exists() or not self.calls.read_text().strip():
+                    self.assertIsNone(bridge.poll())
+                    self.assertLess(time.monotonic(), deadline)
+                    time.sleep(0.02)
+                self.assertEqual(int(self.calls.read_text()), bridge.pid)
+                blocked = self.run_script('remote-control.sh', '--once')
+                self.assertEqual(blocked.returncode, 1)
+                self.assertIn('Could not lock this checkout', blocked.stderr)
+                bridge.send_signal(signal.SIGINT)
+                bridge.communicate(timeout=5)
+                self.assertEqual(bridge.returncode, -signal.SIGINT)
+            finally:
+                if bridge.poll() is None:
+                    bridge.kill()
+                    bridge.communicate(timeout=5)
+        self.stub('npx', 'exit 23')
+        self.assertEqual(self.run_script('remote-control.sh', '--once').returncode, 23)
+
+    @unittest.skipUnless(shutil.which('tmux'), 'tmux is required for the service integration test')
+    def test_detached_bridge_wakes_service_waiter_on_isolated_tmux(self):
+        tmux = shutil.which('tmux')
+        socket = self.root / 'tmux.sock'
+        self.env.update(TEST_TMUX=tmux, TEST_SOCKET=str(socket))
+        self.stub('tmux', 'exec "$TEST_TMUX" -S "$TEST_SOCKET" -f /dev/null "$@"')
+        self.stub('npx', 'printf "%s\n" "$*" > "$CALLS"; exit 23')
+        self.addCleanup(subprocess.run, [tmux, '-S', str(socket), 'kill-server'],
+                        capture_output=True, timeout=5)
+        result = subprocess.run(
+            ['/bin/bash', str(self.bundle / 'tools/desktop-commander.sh')],
+            env=self.env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, '')
+        self.assertEqual(self.calls.read_text(), '@wonderwhy-er/desktop-commander@latest remote\n')
+
+    def test_invalid_remote_usage_and_standalone_ancestry(self):
+        for args in (('--once', 'extra'), ('--unknown',)):
+            result = self.run_script('remote-control.sh', *args)
+            self.assertEqual((result.returncode, result.stdout), (2, ''))
+            self.assertIn('Usage:', result.stderr)
+        self.assertEqual(self.run_script('agent-ancestry.sh', '10').returncode, 0)
+        self.process(10, '/usr/bin/bash', ['bash'], 20)
+        self.process(20, '/usr/bin/bash', ['bash'], 10)
+        for pid in ('10', '01', '-1', 'bad'):
+            result = self.run_script('agent-ancestry.sh', pid)
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', ''))
+
     def test_agent_ancestry(self):
         for executable, argv in (
             ('/usr/bin/codex', ['codex', 'exec']),
@@ -183,6 +281,8 @@ class BootstrapTests(unittest.TestCase):
             ('/usr/bin/node', ['node', '/x/@wonderwhy-er/desktop-commander/dist/index.js', 'remote']),
             ('/usr/bin/bash', ['bash', '/x/run-codex.sh']),
             ('/usr/bin/remote_desktop_commander', ['remote_desktop_commander']),
+            ('/usr/bin/python3.13', ['python3', '-B', '/x/bootstrap/tools/run_codex.py']),
+            ('/usr/bin/python3.13', ['python3', '-B', '/x/bootstrap/tools/bridge.py']),
         ):
             self.process(10, '/usr/bin/bash', ['bash'], 20)
             self.process(20, executable, argv, 1)
@@ -194,7 +294,6 @@ class BootstrapTests(unittest.TestCase):
         self.process(20, '/usr/sbin/sshd-session', ['sshd-session'], 30, uid=0)
         self.process(30, '/usr/sbin/sshd', ['sshd'], 1, uid=0)
         self.assertIn(b'COPY THIS PROMPT INTO CHATGPT', self.finish(self.automatic()))
-        self.boot.write_text('22222222-2222-2222-2222-222222222222\n')
         self.process(10, '/usr/bin/bash', ['bash', '-c', 'echo codex desktop-commander'], 1)
         self.assertIn(b'COPY THIS PROMPT INTO CHATGPT', self.finish(self.automatic()))
 
@@ -245,8 +344,7 @@ class BootstrapTests(unittest.TestCase):
         # A restricted PATH exposes missing commands without relying on host packages.
         isolated = self.root / 'isolated'
         isolated.mkdir()
-        names = ('bash', 'python3', 'dirname', 'cat', 'mkdir', 'stat', 'mktemp',
-                 'mv', 'rm', 'chmod', 'cp', 'cmp', 'awk', 'flock', 'readlink')
+        names = ('bash', 'python3', 'dirname')
         for name in names:
             (isolated / name).symlink_to(shutil.which(name))
         self.env['PATH'] = str(isolated)
@@ -258,7 +356,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn('KO', result.stdout)
         self.assertIn('codex:', result.stdout)
-        (isolated / 'flock').unlink()
+        (isolated / 'bash').unlink()
         rc = self.home / '.bashrc'
         rc.write_text('original\n')
         result = self.run_script('setup.sh', '--install-hook')
@@ -290,28 +388,29 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn('0 KO', result.stdout)
         self.assertNotIn('SKIP', result.stdout)
 
-    def test_hook_does_not_require_python(self):
+    def test_missing_python_has_minimal_read_only_report(self):
         isolated = self.root / 'no-python'
         isolated.mkdir()
-        for name in ('bash', 'dirname', 'cat', 'mkdir', 'stat', 'mktemp',
-                     'mv', 'rm', 'chmod', 'cp', 'cmp', 'awk', 'flock', 'readlink'):
+        for name in ('bash', 'dirname'):
             (isolated / name).symlink_to(shutil.which(name))
         self.env['PATH'] = str(isolated)
-        result = self.run_script('check-requirements.sh', 'hook')
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertNotIn('python3', result.stdout)
-        self.assertNotIn('SKIP', result.stdout)
-        tools = self.run_script('check-requirements.sh', 'tools')
-        self.assertEqual(tools.returncode, 1)
-        self.assertIn('python3: missing', tools.stdout)
+        for profile in ('hook', 'service', 'tools', 'all'):
+            result = self.run_script('check-requirements.sh', profile)
+            self.assertEqual(result.returncode, 1, result.stdout)
+            self.assertIn('python3: missing', result.stdout)
+            self.assertIn('Summary: 0 OK, 1 KO', result.stdout)
+        auto = self.run_script('remote-control.sh', '--auto')
+        self.assertEqual((auto.returncode, auto.stdout, auto.stderr), (0, '', ''))
+        setup = self.run_script('setup.sh', '--install-hook')
+        self.assertEqual(setup.returncode, 1)
+        self.assertIn('Setup requires python3', setup.stderr)
         self.assertEqual(list(self.home.iterdir()), [])
         self.assertFalse(self.calls.exists())
 
-    def test_service_does_not_require_codex_or_python(self):
+    def test_service_does_not_require_codex(self):
         isolated = self.root / 'service-only'
         isolated.mkdir()
-        for name in ('bash', 'dirname', 'cat', 'mkdir', 'stat', 'mktemp',
-                     'mv', 'rm', 'chmod', 'cp', 'cmp'):
+        for name in ('bash', 'dirname', 'python3'):
             (isolated / name).symlink_to(shutil.which(name))
         for name in ('tmux', 'node', 'npx', 'systemctl'):
             (isolated / name).symlink_to(self.bin / name)
@@ -362,6 +461,59 @@ class BootstrapTests(unittest.TestCase):
         rc.write_bytes(first.replace(b'--auto', b'--show'))
         self.assertEqual(self.run_script('setup.sh', '--install-hook').returncode, 0)
         self.assertEqual(rc.read_bytes(), first)
+
+    def test_hook_rejects_malformed_blocks_and_symlinks(self):
+        rc = self.home / '.bashrc'
+        rc.write_bytes(b'# BEGIN codex-starter-kit reminder\nkeep me\n')
+        original = rc.read_bytes()
+        result = self.run_script('setup.sh', '--install-hook')
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('Malformed reminder block', result.stderr)
+        self.assertEqual(rc.read_bytes(), original)
+        target = self.root / 'target'
+        rc.rename(target)
+        rc.symlink_to(target)
+        result = self.run_script('setup.sh', '--install-hook')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('Refusing non-regular .bashrc', result.stderr)
+        self.assertTrue(rc.is_symlink())
+        self.assertEqual(target.read_bytes(), original)
+        self.assertEqual(list(self.home.iterdir()), [rc])
+
+    def test_service_retries_failed_reload_without_replacing_unit_or_backup(self):
+        unit = self.home / '.config/systemd/user/desktop-commander.service'
+        unit.parent.mkdir(parents=True)
+        unit.write_text('previous unit\n')
+        unit.chmod(0o640)
+        backup = unit.with_suffix('.service.backup')
+        pending = unit.with_name(f'.{unit.name}.reload-pending')
+        self.stub('systemctl',
+                  '[[ $* == "--user show-environment" ]] && exit 0\n'
+                  'printf "%s\\n" "$*" >> "$CALLS"\n'
+                  '[[ -e "$HOME/allow-reload" ]] || exit 7')
+
+        failed = self.run_script('setup.sh', '--install-service')
+        self.assertEqual(failed.returncode, 7, failed.stderr)
+        self.assertIn('Rerun --install-service', failed.stderr)
+        self.assertIn('managed unit v1', unit.read_text())
+        self.assertTrue(pending.exists())
+        self.assertEqual(backup.read_text(), 'previous unit\n')
+        self.assertEqual(backup.stat().st_mode & 0o777, 0o640)
+        inodes = (unit.stat().st_ino, backup.stat().st_ino)
+
+        (self.home / 'allow-reload').touch()
+        preview = self.run_script('setup.sh', '--preview')
+        self.assertEqual(preview.returncode, 0, preview.stderr)
+        self.assertTrue(pending.exists())
+        self.assertEqual(self.calls.read_text(), '--user daemon-reload\n')
+        retried = self.run_script('setup.sh', '--install-service')
+        self.assertEqual(retried.returncode, 0, retried.stderr)
+        self.assertIn('daemon reloaded', retried.stdout)
+        self.assertFalse(pending.exists())
+        self.assertEqual((unit.stat().st_ino, backup.stat().st_ino), inodes)
+        current = self.run_script('setup.sh', '--install-service')
+        self.assertIn('Service content already current.', current.stdout)
+        self.assertEqual(self.calls.read_text(), '--user daemon-reload\n' * 2)
 
     def test_service_preview_install_update(self):
         unit = self.home / '.config/systemd/user/desktop-commander.service'

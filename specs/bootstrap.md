@@ -1,8 +1,8 @@
 ## Getting started
 
-1. **Prepare the VM.** Follow [Security](#security) before connecting. Use a
+1. **Prepare the VM.** Follow the [security requirements](../docs/requirements.md#security-reminders) before connecting. Use a
    nonprivileged account without administrative access. Install Bash, Git,
-   Python 3, Node.js with npm/npx, Codex CLI, and your project's tools. Complete
+   Python 3.8 or newer, Node.js with npm/npx, Codex CLI, and your project's tools. Complete
    Codex sign-in as that account.
 
 2. **Clone this kit on the VM.** In that account's terminal, replace the placeholder
@@ -26,13 +26,16 @@
    (the default) for a read-only prerequisite report. OK/KO rows for only the selected profile and a summary
    use color on a terminal and plain text when redirected. Exit status is 0 when
    the selected profile passes, 1 for missing requirements, and 2 for invalid usage.
-   Hook checks Bash, readlink, flock, Linux procfs, and setup utilities; service
-   checks setup utilities, tmux (including the unit's fixed paths), node/npx, and
-   a reachable `systemctl --user`; tools checks Python 3, procfs, git, and Codex CLI.
+   Every profile checks Bash, `dirname`, and Python 3.8 or newer. The `hook`
+   profile also checks Linux procfs and `/usr/bin/bash`. The `service` profile
+   checks tmux, node/npx, a reachable `systemctl --user`, and the unit's fixed
+   paths for Bash and tmux. The `tools` profile checks procfs, Git, and Codex CLI.
    Service/tools resolve the existing NVM environment as their wrappers do.
    Nothing is installed or downloaded. Setup runs its relevant profile before any
-   mutation. Preview checks the service profile, renders the unit even on failure,
-   returns the check status, and writes no files.
+   mutation. With a supported Python interpreter, preview checks the service
+   profile, renders the unit even when that profile fails, returns the check
+   status, and writes no files. If Python is missing, the preflight prints a
+   minimal report and setup exits with a diagnostic.
 
    Hook setup preserves existing `.bashrc` content and writes the managed
    block only when the resulting file differs. The hook runs on interactive Bash
@@ -44,8 +47,9 @@
    Both manual and automatic banners use restrained ANSI color on a terminal;
    redirected output stays plain and the copy/paste instruction is unchanged.
 
-   Automatic display requires a terminal and readable Linux process ancestry. Ancestry matching skips Codex and Desktop Commander
-   executable names and known interpreter script positions using Bash and readlink.
+   Automatic display requires Python, a terminal, and readable Linux process
+   ancestry. The hook stays silent if Python is missing. The ancestry check
+   skips Codex and Desktop Commander by executable name and known interpreter script positions.
    SSH titles such as `sshd-session: codex@pts/1` and arbitrary argument text do
    not identify agents. SSH boundaries are verified through matching procfs `comm` and status `Name`,
    `PPid`, and `Uid`: session processes lead through a root session to a root
@@ -53,11 +57,14 @@
    `cmdline`; every non-SSH descendant must expose both for agent inspection. Other unreadable
    ancestry fails closed. Renamed processes,
    unusual launchers, and detached ancestry can evade detection. This is a convenience
-   heuristic, not a security boundary..
+   heuristic, not a security boundary.
 
    Service setup compares the full unit content,
-   backs up changed units to `.service.backup`, and runs user `daemon-reload` only
-   after a change. It never starts, stops, restarts, or enables the bridge. It
+   backs up changed units to `.service.backup`, and runs user `daemon-reload`
+   after a change or when a pending reload marker exists from an earlier
+   installation attempt. Rerunning `--install-service` retries the reload
+   without rewriting an unchanged unit or backup. The marker is removed after
+   a successful reload. Setup never starts, stops, restarts, or enables the bridge. It
    preserves the installed unit's tmux session, NVM loading, and restart policy.
    Keep this checkout at its configured path; rerun setup after moving it. When
    ready, manually start the service with
@@ -73,7 +80,8 @@
    installing the hook or service. It checks for an existing service or named
    tmux session, holds a nonblocking lock on the checkout's bootstrap directory,
    prints the same reminder as `--show`, and replaces the launcher with the
-   foreground `npx` process. See [one-shot startup](../docs/one-shot-startup.md).
+   foreground `npx` process. The lock applies to one checkout. Coordinate
+   starts across checkouts and with the service. See [one-shot startup](../docs/one-shot-startup.md).
 
 4. **Connect ChatGPT.** In the ChatGPT web app, configure the **Remote Desktop
    Commander plugin** using the bridge's connection information and the plugin's

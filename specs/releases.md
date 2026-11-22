@@ -4,6 +4,7 @@
 zeroes or a `v` prefix. Tags use exactly that version as both annotated tag name
 and message.
 
+`release.sh` requires Bash and Python 3.8 or newer, including for help and checks.
 `./release.sh --check` validates `bootstrap/version.txt`. It is read-only and
 works without Git outside of tag builds. In GitHub tag builds
 (or `CI_COMMIT_TAG` context), the version must equal the tag and the tag must
@@ -28,8 +29,9 @@ URL. Do not fetch, pull, merge, rebase or change Git configuration.
 When unspecified, ask `Choose bump (major/minor/patch):`; invalid input or EOF
 stops without writes. Increment the selected component and reset lower components.
 Components above nine digits are rejected for bump arithmetic to avoid overflow.
-Check the exact target tag locally and remotely before confirmation; failures in
-remote lookup stop the operation. Never move, delete or overwrite existing tags.
+Check the exact target tag locally and remotely before confirmation. A failed
+lookup stops the operation even if it produces no stdout. Never move, delete or
+overwrite existing tags.
 An existing current-version tag is allowed: the target must be new.
 
 Display current version, bump and target, then ask
@@ -37,12 +39,15 @@ Display current version, bump and target, then ask
 whitespace ignored, confirms. Declining exits 0 and changes nothing. EOF or an
 interruption fails. There is no default bump and no automatic confirmation.
 
-On confirmation update and stage only `bootstrap/version.txt`, commit
-`build: bump version`, recheck the version and clean status, then run:
+After confirmation, repeat the preflight and tag checks before writing.
+Replace the regular `bootstrap/version.txt` atomically, stage only that file,
+and commit `build: bump version`. Recheck the version, clean status, branch,
+commit parent, and committed contents before creating the annotated tag.
+Verify that the tag points to the release commit, then push the two verified
+object IDs to their explicit refs:
 
 ```bash
-git tag -a VERSION -m VERSION
-git -c push.followTags=false push --atomic origin main VERSION
+git -c push.followTags=false push --atomic origin COMMIT_ID:refs/heads/main TAG_ID:refs/tags/VERSION
 ```
 
 Native commit/tag/push output is preserved. Disabling followTags prevents Git
@@ -52,7 +57,8 @@ force or automatic retry. Inspect git status, git log -1, git tag and origin
 before manual recovery. Commit/tag failures may leave local changes or commits;
 failed atomic pushes retain local commits/tags but publish neither requested ref.
 Concurrent remote changes, hooks and authentication can still reject publication.
-No atomic-push fallback is allowed.
+No atomic-push fallback is allowed. Run releases one at a time in the intended
+checkout. A failed Git status check stops the release even if stdout is empty.
 
 ## GitHub draft and publishing
 

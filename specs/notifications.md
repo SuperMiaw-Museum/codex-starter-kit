@@ -11,11 +11,13 @@ bootstrap/tools/manual-task.sh status
 ```
 
 The runner reads task instructions through stdin, loads NVM if present, uses the
-configured Codex permissions, and reports `SANDBOX_HANDOFF_EXIT_CODE=N` on exit.
-The explicit `--task` form replaces the old positional inline text interface.
+configured Codex permissions, and reports `SANDBOX_HANDOFF_EXIT_CODE=N` when a
+started task finishes. For inline instructions use `--task`. For files, use
+either `--task-file FILE` or the positional file form shown above. Relative file
+paths resolve from the caller's directory.
 
 All checkouts share a private per-user registry at
-`/tmp/codex-starter-kit-tasks-UID` (Bash, Python 3 and Linux `/proc` required).
+`/tmp/codex-starter-kit-tasks-UID` (Bash, Python 3.8 or newer, and Linux `/proc` required).
 Random tokens identify tasks; `flock` and atomic replacement protect updates.
 The lock also serializes delivery, so concurrent notifications reflect each
 transition in order. Counts include both manual and Codex tasks and always show
@@ -38,7 +40,7 @@ Malformed registry entries reject a transition before any state write or notice;
 project names and labels are sanitized again when read. Do not edit registry files
 to adjust the count: it is derived from task identities, never stored separately.
 
-Read-only `status` shows active and stale counts. Each active task uses two lines:
+Read-only `status` shows active and stale counts without revealing tokens. Each active task uses two lines:
 `YYYY-MM-DD HH:MM Codex [project]` or `YYYY-MM-DD HH:MM Manual [project]` in local
 time, followed by its label indented by two spaces. The label uses up to 120
 characters with `...` appended when truncated. Status uses the same label
@@ -48,7 +50,7 @@ recognized by PID, process start identity and boot ID; manual tasks expire after
 successful transition. There is no automatic monitor. A valid END can still
 finish a stale entry before pruning. Keep manual work within 24 hours and do not
 remove registry files while tasks run. Crashes after an atomic state commit may
-lose a notification, and SIGKILL cannot run the runner's END trap. Terminal
+lose a notification, and SIGKILL can prevent the supervisor from sending END. Terminal
 delivery is best effort; use task output and exit status to assess success.
 
 By default, Manual and Codex START show a single-line task preview of up to 120
@@ -65,7 +67,8 @@ duration, the task identifier, and any available `model:`, `tokens:` and
 `session:` fields, in that order, with ` | ` between fields. The `session:`
 field comes from the session reported by Codex. By default
 the runner uses `codex exec --json` when supported and streams completed agent messages and
-errors. Set `CODEX_STARTER_KIT_NOTIFY_METADATA=0` to disable capture and use the
+errors. Capture failures are reported separately and preserve the Codex exit
+status. Set `CODEX_STARTER_KIT_NOTIFY_METADATA=0` to disable capture and use the
 usual Codex tool and progress display. The token count
 adds input and output from the completed turn, with cached input already
 included. The model comes from the matching local session record. Failed or

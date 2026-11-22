@@ -11,8 +11,9 @@ install tools, authenticate, start services, or change the environment on receip
 
 The human explicitly runs `bootstrap/setup.sh --install-hook` and/or
 `--install-service` if wanted; do not run setup on receipt of this prompt.
-`remote-control.sh` is a preparation reminder, not a bridge launcher. Its optional
-interactive Bash hook shows on every eligible human terminal and skips
+`remote-control.sh --show` displays the preparation reminder. `--once` also
+launches the foreground bridge. The optional interactive Bash hook shows on
+every eligible human terminal and skips
 recognized Codex/Desktop Commander ancestry. Detection is a convenience heuristic,
 not a security boundary. A verified SSH executable ends the ancestry walk;
 protected root SSH parents are not required to be readable. Other ambiguous
@@ -32,7 +33,7 @@ do not attempt setup yourself.
 
 Only perform a preflight when explicitly requested. Keep it read-only: confirm the
 remote account, absolute bundle and supplied project paths, readable instructions,
-and availability/versions of Bash, Git, Python 3, Node.js, npm/npx, and Codex.
+and availability/versions of Bash, Git, Python 3.8 or newer, Node.js, npm/npx, and Codex.
 Do not invoke npx, the runner, or a Codex task; install, update, sign in, write files, change
 permissions, or alter services or network policy. Report missing prerequisites
 for the human to resolve, then wait for a task.
@@ -114,7 +115,8 @@ START prints a random 32-hex token alone on stdout and its notification on stder
 Save the token unchanged; END retrieves the original project, label and start time.
 Capture the task's exit status immediately and send END on failure as well as
 success. The helper's status is not the task's status. Save the token from START
-to finish the task later. Do not retry START after losing its output.
+to finish the task later. `status` does not display tokens. Report a lost token
+without retrying START.
 
 Run this example only for a requested task, never on receipt or during preflight:
 
@@ -139,7 +141,7 @@ transition: `🤖 1 🚀 START Codex [project] task preview | task: 8e5940bf314a
 stdout is plain. Labels are sanitized and truncated.
 
 The registry is private under `/tmp/codex-starter-kit-tasks-UID` and requires
-Python 3 and Linux `/proc`. It locks updates and notification delivery together.
+Python 3.8 or newer and Linux `/proc`. It locks updates and notification delivery together.
 Dead/reused Codex runner processes and manual tasks older than 24 hours are
 excluded from status and pruned on the next successful START/END. Manual tasks
 can span remote sessions; finish them within 24 hours. `status` is read-only and
@@ -151,12 +153,17 @@ An END can still finish a stale token until a successful transition prunes it.
 Malformed registry entries reject transitions before writing state or sending a
 notice. Do not edit the registry to change counts; counts come from task records.
 
-The runner accepts `PROJECT_DIR TASK_FILE` (relative task paths resolve from the
-caller's directory) or `PROJECT_DIR --task "instructions"`, loads NVM when present,
-and passes instructions through stdin. It uses configured Codex permissions,
-adding only `--skip-git-repo-check` outside Git. Its EXIT trap sends END and prints
-`SANDBOX_HANDOFF_EXIT_CODE=N`; HUP/INT/TERM map to 129/130/143. Bash may defer traps
-while waiting for a foreground command. SIGKILL cannot send END. Notifications
+The runner accepts `PROJECT_DIR TASK_FILE`, `PROJECT_DIR --task-file TASK_FILE`,
+or `PROJECT_DIR --task "instructions"`. Relative task paths resolve from the
+caller's directory. It loads NVM when present, passes instructions through
+stdin, uses configured Codex permissions, and adds `--skip-git-repo-check`
+when the Git repository probe fails. Once a task starts, the supervisor
+attempts END and prints `SANDBOX_HANDOFF_EXIT_CODE=N`. It forwards HUP, INT,
+and TERM to the Codex process group, allows a short grace period before
+escalating to SIGKILL, and reports 129, 130, and 143 respectively. A descendant
+that leaves the group can outlive cancellation. SIGKILL of the supervisor
+can prevent END. Output capture errors are diagnosed separately from the
+Codex exit status. Notifications
 are best effort: inaccessible terminals, broken output or a crash after state
 commit can lose a notice. The registry remains the count authority; notifications
 do not prove success. Do not delete registry files while tasks are running.

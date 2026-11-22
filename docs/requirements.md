@@ -105,6 +105,13 @@ If you are unsure how to configure or verify the isolation, ask ChatGPT to help 
 
 ## Setup verification
 
+The kit's commands use Bash, `dirname`, and Python 3.8 or newer on Linux.
+The Python modules use the standard library. For Codex tasks, provide Git,
+Codex CLI, and readable Linux procfs. The bridge requires Node.js with npm/npx.
+Persistent mode also requires tmux, a reachable systemd user manager, and
+`/usr/bin/bash` and `/usr/bin/tmux`. The optional SSH hook uses
+`/usr/bin/bash` and readable process ancestry in procfs.
+
 Clone the kit into the VM account:
 
 ```bash
@@ -117,7 +124,11 @@ Check the required tools before starting. The script reports missing dependencie
 ~/codex-starter-kit/bootstrap/check-requirements.sh all
 ```
 
-The `all` profile includes persistent-service requirements; one-shot mode does not need systemd or tmux.
+The `all` profile includes persistent-service requirements. For a one-shot
+session, check the `tools` profile and verify Node.js and npx separately.
+One-shot mode can run without systemd or tmux. Live inspection of Codex tasks
+requires tmux. If Python is missing, the preflight reports that in Bash and
+exits before checking the other dependencies.
 
 ## Next step
 

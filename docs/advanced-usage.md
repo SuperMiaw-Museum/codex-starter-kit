@@ -20,7 +20,7 @@ The Codex runner broadcasts START, END and ERROR notifications to SSH terminals 
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `CODEX_STARTER_KIT_SHOW_FULL_PROMPT` | `0` | Set to `1` to include the complete delegated prompt in START notifications. Be mindful of sensitive task text. |
-| `CODEX_STARTER_KIT_LIMIT_REMINDER` | `0` | Set to `1` to show remaining 5-hour and weekly Codex quotas after END notifications, when a fresh local session snapshot is available. |
+| `CODEX_STARTER_KIT_LIMIT_REMINDER` | `0` | Set to `1` to show the snapshot age and remaining 5-hour and weekly quotas after Codex END or ERROR. Stale or expired snapshots show only their age and status. If no usable snapshot exists, the notice says `Codex usage: unavailable`. |
 | `CODEX_STARTER_KIT_LIVE_INSPECT` | `0` | Set to `1` to run each Codex handoff in a dedicated tmux session for read-only live inspection. |
 
 ### Persistent service (systemd)
@@ -67,6 +67,10 @@ To continue a previous Codex task, use its session ID (shown in the END notifica
 ```
 
 The session must already exist locally. An invalid or unavailable session fails rather than silently starting a new one. Omit `--resume` to start a fresh session.
+
+To read instructions from a file, use `--task-file FILE` in place of
+`--task "…"`. The positional file form is also supported. Relative task
+file paths are resolved from the directory where you invoke the runner.
 
 ## Project resources
 

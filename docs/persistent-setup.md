@@ -24,6 +24,12 @@ Use the displayed connection details to connect from ChatGPT, then paste the rem
 
 After updating the checkout, rerun `setup.sh` for any installed components you want to refresh. Changes are applied only when needed; the bridge is never restarted automatically.
 
+If service installation reports that `daemon-reload` failed, fix the user
+manager issue and rerun `setup.sh --install-service`. The installer records
+the pending reload and retries it even when the unit file already matches.
+You can inspect the unit with `setup.sh --preview` without writing files or
+reloading the user manager.
+
 For notification settings and service configuration, see [advanced usage](advanced-usage.md).
 
 ## Uninstall

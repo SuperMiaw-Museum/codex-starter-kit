@@ -1,11 +1,13 @@
-"""Exercise the Bash release only in disposable repositories and bare remotes."""
+"""Exercise the release CLI only in disposable repositories and bare remotes."""
 from pathlib import Path
 import errno
+import importlib.util
 import os
 import pty
 import select
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -22,7 +24,7 @@ class ReleaseTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name) / 'kit'
         self.root.mkdir()
-        for name in ('release.sh', 'README.md', 'bootstrap'):
+        for name in ('release.sh', 'release.py', 'README.md', 'bootstrap'):
             src = SOURCE / name
             if src.is_dir():
                 shutil.copytree(src, self.root / name)
@@ -91,8 +93,84 @@ class ReleaseTests(unittest.TestCase):
 
     def test_check_readonly_without_git(self):
         before = self.snapshot()
-        self.assertEqual(self.run_cli('--check').returncode, 0)
+        binaries = Path(self.tmp.name) / 'no-git'
+        binaries.mkdir()
+        for command in ('bash', 'dirname', 'python3'):
+            (binaries / command).symlink_to(shutil.which(command))
+        self.assertEqual(self.run_cli('--check', PATH=str(binaries)).returncode, 0)
         self.assertEqual(before, self.snapshot())
+
+    def test_bump_arithmetic_unit(self):
+        spec = importlib.util.spec_from_file_location('release', SOURCE / 'release.py')
+        release = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(release)
+        self.assertEqual(release.bump('1.2.9', 'patch'), '1.2.10')
+        self.assertEqual(release.bump('1.9.9', 'minor'), '1.10.0')
+        self.assertEqual(release.bump('999999999.2.3', 'major'), '1000000000.0.0')
+        with self.assertRaises(release.ReleaseError):
+            release.bump('1.1000000000.3', 'major')
+
+    def git_failure_stub(self):
+        binaries = Path(self.tmp.name) / 'git-stubs'
+        binaries.mkdir()
+        counters = Path(self.tmp.name) / 'counter'
+        executable = binaries / 'git'
+        executable.write_text(
+            f'#!{sys.executable}\n'
+            'import os, sys\n'
+            'from pathlib import Path\n'
+            'args = sys.argv[1:]\n'
+            'if args[:1] == ["status"] or args[:2] in (["tag", "--list"], ["ls-remote", "--tags"]):\n'
+            '    if args[0] == os.environ.get("FAIL_GIT"):\n'
+            '        counter = Path(os.environ["GIT_STUB_COUNTER"])\n'
+            '        count = int(counter.read_text()) + 1 if counter.exists() else 1\n'
+            '        counter.write_text(str(count))\n'
+            '        if count == int(os.environ["FAIL_AT"]):\n'
+            '            sys.exit(7)\n'
+            'os.execv(os.environ["REAL_GIT"], ["git", *args])\n')
+        executable.chmod(0o755)
+        self.env.update(REAL_GIT=shutil.which('git'), GIT_STUB_COUNTER=str(counters),
+                        PATH=str(binaries) + os.pathsep + self.env['PATH'])
+        return counters
+
+    def test_failed_git_checks_with_empty_stdout_stop_release(self):
+        self.fixture()
+        counters = self.git_failure_stub()
+        before = self.snapshot()
+        for command, phase, expected in (('status', 1, 1), ('tag', 1, 1), ('status', 2, 1),
+                                         ('tag', 2, 1), ('ls-remote', 1, 7), ('ls-remote', 2, 7)):
+            with self.subTest(command=command, phase=phase):
+                counters.unlink(missing_ok=True)
+                self.env.update(FAIL_GIT=command, FAIL_AT=str(phase))
+                code, output = self.interactive(('--bump', 'patch'))
+                self.assertEqual(code, expected, output)
+                self.assertIn(f'git {command} exited 7', output)
+                self.assertEqual(self.snapshot(), before)
+                self.assertEqual(self.git('rev-parse', 'HEAD'), self.initial)
+                self.assertEqual(self.git('tag'), '')
+
+    def test_failed_git_status_after_commit_stops_tag_and_push(self):
+        self.fixture()
+        self.git_failure_stub()
+        self.env.update(FAIL_GIT='status', FAIL_AT='3')
+        code, output = self.interactive(('--bump', 'patch'))
+        self.assertEqual(code, 1, output)
+        self.assertIn('git status exited 7', output)
+        self.assertIn('No rollback performed', output)
+        self.assertNotEqual(self.git('rev-parse', 'HEAD'), self.initial)
+        self.assertEqual(self.git('tag'), '')
+        self.assertEqual(self.git('--git-dir=' + str(self.remote), 'rev-parse', 'main'), self.initial)
+
+    def test_commit_with_hook_added_file_stops_tag_and_push(self):
+        self.fixture()
+        hook = self.root / '.git/hooks/pre-commit'
+        hook.write_text('#!/bin/sh\nprintf "unexpected\\n" > hook-added\ngit add -- hook-added\n')
+        hook.chmod(0o755)
+        code, output = self.interactive(('--bump', 'patch'))
+        self.assertEqual(code, 1, output)
+        self.assertIn('No rollback performed', output)
+        self.assertEqual(self.git('tag'), '')
+        self.assertEqual(self.git('--git-dir=' + str(self.remote), 'rev-parse', 'main'), self.initial)
 
     def test_version_file_validated(self):
         for content in ('01.2.3\n', self.version, self.version + '\n\n',
@@ -132,6 +210,32 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(before, self.snapshot())
             self.assertEqual(self.git('rev-parse', 'HEAD'), self.initial)
             self.assertEqual(self.git('tag'), '')
+
+    def test_eof_without_confirmation_line_does_not_release(self):
+        self.fixture()
+        before = self.snapshot()
+        code, output = self.interactive(('--bump', 'patch'), 'yes\x04\x04')
+        self.assertEqual(code, 1, output)
+        self.assertIn('Input ended before release confirmation', output)
+        self.assertEqual(before, self.snapshot())
+        self.assertEqual(self.git('rev-parse', 'HEAD'), self.initial)
+        self.assertEqual(self.git('tag'), '')
+
+    def test_release_does_not_write_through_a_tracked_version_symlink(self):
+        outside = Path(self.tmp.name) / 'external-version'
+        outside.write_text(self.version + '\n')
+        version_file = self.root / VERSION_FILE
+        version_file.unlink()
+        version_file.symlink_to(outside)
+        self.fixture()
+
+        code, output = self.interactive(('--bump', 'patch'))
+        self.assertEqual(code, 1, output)
+        self.assertIn('Refusing to update a non-regular bootstrap/version.txt', output)
+        self.assertEqual(outside.read_text(), self.version + '\n')
+        self.assertTrue(version_file.is_symlink())
+        self.assertEqual(self.git('rev-parse', 'HEAD'), self.initial)
+        self.assertEqual(self.git('tag'), '')
 
     def test_bumps_commit_tag_and_atomic_push(self):
         self.fixture()
