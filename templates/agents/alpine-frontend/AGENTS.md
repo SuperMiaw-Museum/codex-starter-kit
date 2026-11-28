@@ -57,3 +57,9 @@ Build maintainable, lightweight frontend applications using the established pers
 - Keep dependencies intentional and avoid introducing additional build systems or runtime services without justification.
 - For Bun projects, use Bun end-to-end in CI: `bun install --frozen-lockfile` followed by `bun run check`. The consolidated `check` script must cover type checking, formatting, tests, production build, and generated HTML validation. Do not install Node.js or npm solely out of convention.
 - Follow the project's actual deployment target and CI conventions; do not invent infrastructure requirements.
+
+## Optional instructions — review before adoption
+
+A human or ChatGPT must review this section and select the instructions that apply before adopting them in the project's `AGENTS.md`.
+
+- For frontend projects that depend on a separate upstream server project, document any server changes required by frontend work in the frontend project's `specs/UPSTREAM.md`. Describe the required behavior and acceptance criteria there, and leave implementation to the upstream project.

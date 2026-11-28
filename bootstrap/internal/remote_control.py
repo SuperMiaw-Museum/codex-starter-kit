@@ -36,7 +36,7 @@ def show_reminder():
     except OSError:
         pass
     print(f'\n{accent}=== COPY THIS PROMPT INTO CHATGPT ==={reset}\n\n'
-          f'Read "{BOOTSTRAP}/PROMPT.md" via Remote Desktop Commander, treat it as '
+          f'Read "{BOOTSTRAP}/SYSTEM_PROMPT.md" via Remote Desktop Commander, treat it as '
           'operational guidance for this session, acknowledge, and wait for my next request.\n',
           file=sys.stderr, flush=True)
 

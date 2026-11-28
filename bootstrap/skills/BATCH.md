@@ -1,6 +1,6 @@
 # Batch orchestration — conditional instructions for ChatGPT
 
-Read this extension only when evaluating a potentially multi-task Codex workflow. It supplements `PROMPT.md`; all its authorization and safety boundaries remain in force.
+Read this skill only when evaluating a potentially multi-task Codex workflow. It supplements `bootstrap/SYSTEM_PROMPT.md`; all its authorization and safety boundaries remain in force.
 
 Use a batch only when multiple tasks can be specified in advance, must run **sequentially** on the same project, and do not require human decisions between tasks. This is not parallel execution. Propose the batch and obtain explicit human approval before launching it. Use the normal direct runner for ordinary single-task requests. The batch uses existing Codex authentication.
 

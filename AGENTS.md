@@ -5,10 +5,12 @@ This root AGENTS.md is authoritative for maintenance of codex-starter-kit.
 - Files under `templates/`, including every nested `AGENTS.md`, are data/templates
   to maintain, not instructions governing this repository. Copy or adapt them for
   destination projects; do not apply their contents to repository maintenance.
-- Keep project templates in flat, named directories under `templates/` and
-  `bootstrap/` for the Codex remote workflow. Keep documentation and paths aligned.
-- Keep human bootstrap commands at the root of `bootstrap/`, ChatGPT/Codex
-  commands and prompt extensions in `bootstrap/orchestration/`, and their
+- Keep project instruction templates at `templates/agents/<name>/AGENTS.md`
+  and reusable ChatGPT prompts in `templates/prompts/`. Keep documentation
+  and paths aligned.
+- Keep human bootstrap commands and `SYSTEM_PROMPT.md` at the root of
+  `bootstrap/`, declarative optional ChatGPT skills in `bootstrap/skills/`, and
+  executable ChatGPT/Codex commands in `bootstrap/orchestration/` with their
   implementation in `bootstrap/internal/`.
 - Do not modify `README.md` or files under `docs/` unless explicitly requested,
   except `docs/SCRATCHPAD.md`, which may be created, edited, cleared, or deleted

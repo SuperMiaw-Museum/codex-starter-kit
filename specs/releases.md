@@ -64,6 +64,11 @@ checkout. A failed Git status check stops the release even if stdout is empty.
 
 The tag-only draft job depends on successful checks. GitHub Actions owns release
 creation and any future builds/assets. No build or asset pipeline currently exists.
+The tagged source tree distributes `bootstrap/SYSTEM_PROMPT.md` and the
+optional ChatGPT instruction files under `bootstrap/skills/` alongside the
+executable commands in `bootstrap/orchestration/`. Keep them together when
+copying the bootstrap directory.
+
 Workflow concurrency serializes runs for each tag without cancellation. The job
 uses `gh api --paginate` to query all release pages (including drafts); an existing
 draft or public release is left unchanged. Lookup failure prevents creation.

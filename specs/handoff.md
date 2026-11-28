@@ -1,7 +1,7 @@
 # Handoff contract and original operational reference
 
 This reference preserves the pre-refactor operational instructions for review.
-The active ChatGPT contract remains in `bootstrap/PROMPT.md`.
+The active ChatGPT contract remains in `bootstrap/SYSTEM_PROMPT.md`.
 
 ## On receipt: acknowledge and wait
 

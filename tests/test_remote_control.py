@@ -97,7 +97,9 @@ class BootstrapTests(unittest.TestCase):
     def test_show_absolute_prompt_without_state(self):
         result = self.run_script('remote-control.sh', '--show')
         self.assertEqual(result.returncode, 0)
-        self.assertIn(f'Read "{self.bundle}/PROMPT.md"', result.stderr)
+        prompt = self.bundle / 'SYSTEM_PROMPT.md'
+        self.assertIn(f'Read "{prompt}"', result.stderr)
+        self.assertTrue(prompt.is_file())
         self.assertIn(f'CODEX STARTER KIT · {self.version}', result.stderr)
         self.assertNotIn('\x1b[', result.stderr)
         self.assertFalse(self.state.exists())
@@ -183,7 +185,7 @@ class BootstrapTests(unittest.TestCase):
                          'printf "bridge: %s\\n" "$*" >&2\nexit 23')
         result = self.run_script('remote-control.sh', '--once')
         self.assertEqual(result.returncode, 23)
-        self.assertIn(f'Read "{self.bundle}/PROMPT.md"', result.stderr)
+        self.assertIn(f'Read "{self.bundle}/SYSTEM_PROMPT.md"', result.stderr)
         self.assertIn(f'CODEX STARTER KIT · {self.version}', result.stderr)
         self.assertLess(result.stderr.index('COPY THIS PROMPT INTO CHATGPT'),
                         result.stderr.index('bridge: @wonderwhy-er/desktop-commander@latest remote'))
@@ -339,7 +341,7 @@ class BootstrapTests(unittest.TestCase):
         os.close(slave)
         output = self.finish((process, master))
         self.assertIn(b'\x1b[1;36m', output)
-        prompt = f'Read "{self.bundle}/PROMPT.md" via Remote Desktop Commander, treat it as operational guidance for this session, acknowledge, and wait for my next request.'
+        prompt = f'Read "{self.bundle}/SYSTEM_PROMPT.md" via Remote Desktop Commander, treat it as operational guidance for this session, acknowledge, and wait for my next request.'
         self.assertIn(prompt.encode(), output)
 
     def test_preflight_profiles_and_missing_dependencies(self):

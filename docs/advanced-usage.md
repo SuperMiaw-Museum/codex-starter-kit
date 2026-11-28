@@ -9,9 +9,15 @@ To make cloned Git repositories available to the agent, create symlinks under th
 - `~/.codex-starter-kit-repos-ro/`: repositories for inspection only.
 - `~/.codex-starter-kit-repos-rw/`: repositories for inspection and scoped editing.
 
-A repository linked in both is treated as read-only; the agent reports the conflict. The kit does not create these directories or links. This convention guides agent behavior but **does not enforce filesystem permissions** or replace network isolation. Git and destructive-operation safeguards still apply. See the [operational prompt](../bootstrap/PROMPT.md) for details.
+A repository linked in both is treated as read-only; the agent reports the conflict. The kit does not create these directories or links. This convention guides agent behavior but **does not enforce filesystem permissions** or replace network isolation. Git and destructive-operation safeguards still apply. See the [repository access instructions](../bootstrap/skills/REPOSITORIES.md) for details.
 
 **Recommendation:** Prefer public repositories cloned without credentials, so the agent can inspect and edit files locally without being able to push changes. If remote write access is necessary, use narrowly scoped credentials restricted to the intended repositories. Keep Git push and publication operations on your trusted machine whenever possible.
+
+## Dedicated playground VM
+
+Ask ChatGPT to activate the [Playground skill](../bootstrap/skills/PLAYGROUND.md)
+by name for tasks that need sudo or Docker. Prepare a separate, isolated,
+SSH-accessible VM without user data or secrets, and explicitly authorize its use.
 
 ## Notification options
 
@@ -61,20 +67,12 @@ CODEX_STARTER_KIT_SHOW_FULL_PROMPT=1 ./bootstrap/remote-control.sh --once
 ## Resume a Codex session
 
 Ask ChatGPT to continue a previous Codex task and provide the session ID from
-the END notification. ChatGPT reads
-`bootstrap/orchestration/PROMPT.EXTENSION.RESUME.md` and invokes the runner with
-`--resume`:
-
-```bash
-./bootstrap/orchestration/run-codex.sh /path/to/project --resume SESSION_ID --task "Continue the previous task."
-```
+the END notification.
 
 The session must already exist locally. An invalid or unavailable session fails rather than silently starting a new one. Omit `--resume` to start a fresh session.
 
-To read instructions from a file, use `--task-file FILE` in place of
-`--task "…"`. The positional file form is also supported. Relative task
-file paths are resolved from the directory where you invoke the runner.
-
 ## Project resources
 
-Use the [project templates](../templates/) to add project-specific instructions.
+Adapt an [AGENTS.md template](../templates/agents/) for project-specific instructions.
+Use the [reusable prompts](../templates/prompts/) in ChatGPT for project status,
+commit message suggestions, or remaining work.

@@ -15,7 +15,10 @@ import unittest
 SOURCE = Path(__file__).resolve().parents[1]
 VERSION_FILE = 'bootstrap/version.txt'
 FILES = (VERSION_FILE, 'release.sh', 'bootstrap/setup.sh',
-         'bootstrap/remote-control.sh', 'README.md', 'bootstrap/PROMPT.md')
+         'bootstrap/remote-control.sh', 'README.md', 'bootstrap/SYSTEM_PROMPT.md',
+         'bootstrap/skills/BATCH.md', 'bootstrap/skills/MANUAL.md',
+         'bootstrap/skills/RESUME.md', 'bootstrap/skills/REPOSITORIES.md',
+         'bootstrap/skills/PLAYGROUND.md')
 
 
 class ReleaseTests(unittest.TestCase):

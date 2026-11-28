@@ -89,19 +89,24 @@
    install or configure it.
 
 5. **Paste the banner's instruction into the conversation.** It tells ChatGPT to
-   read [bootstrap/PROMPT.md](bootstrap/PROMPT.md) at its actual absolute VM path.
+   read [bootstrap/SYSTEM_PROMPT.md](../bootstrap/SYSTEM_PROMPT.md) at its actual
+   absolute VM path.
    Nothing is sent automatically. ChatGPT acknowledges the instructions and waits
    without starting tasks or changing the environment. Explicitly request a
    read-only connectivity/prerequisite check if wanted.
 
+   The optional [Playground skill](../bootstrap/skills/PLAYGROUND.md) requires
+   explicit activation by name and separate authorization for access and work.
+   Worker setup does not configure or grant access to the playground.
+
 6. **Give ChatGPT a task.** Supply your existing project's absolute VM path, the
-   desired change, and acceptance checks. Optionally adapt a [project template](#project-templates)
+   desired change, and acceptance checks. Optionally adapt a [project template](../templates/agents/)
    as the project's root `AGENTS.md`, reconciling existing instructions before
    replacing them. ChatGPT reads those instructions, delegates work to Codex, and
    reviews the result. Keep the existing project directory; do not initialize Git
    for this setup. Check task output and exit status; START/END notifications are
    best effort.
 
-For runner commands and notification examples, see
-[bootstrap/PROMPT.md](bootstrap/PROMPT.md). Confirm absolute bundle and project
-paths on the VM before running tasks; ChatGPT's local sandbox paths are separate.
+For runner commands and notification examples, see the
+[handoff reference](handoff.md). Confirm absolute bundle and project paths on
+the VM before running tasks. ChatGPT's local sandbox paths are separate.
