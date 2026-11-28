@@ -11,6 +11,12 @@ for commit subjects. Do not edit, stage, commit, push, launch Codex, or run
 new checks solely because a shortcut was invoked. Report unavailable evidence.
 This skill does not grant additional access or override the system prompt.
 
+When NO_GIT is active in the conversation, inspect files directly for status
+and remaining work without Git discovery or commands. All shortcuts remain
+applicable. For !commit, use known actual changes from conversation context,
+task reports, supplied diffs, or direct file inspection instead of Git.
+Ask for missing change information only when evidence is insufficient.
+
 ## !status [short|complete]
 
 Review the available project context and report its current status. Use the repository's working tree, recent commits, specifications, and check results when available. Base the report on observed evidence and distinguish verified results from claims or assumptions. If you lack repository access, use the material supplied in this conversation and state what you could not verify.
@@ -23,7 +29,7 @@ risks, limitations, and decisions.
 
 ## !commit
 
-Suggest one lowercase Conventional Commit subject for the actual changes. Inspect the staged diff and use it if changes are staged. Otherwise, review the working-tree diff and relevant untracked files. If you cannot inspect the repository, use a supplied diff or ask for it if none is available.
+Suggest one lowercase Conventional Commit subject for the actual changes. Unless NO_GIT is active, inspect the staged diff and use it if changes are staged. If nothing is staged, review the working-tree diff and relevant untracked files. If repository inspection is unavailable or NO_GIT is active, use the available evidence of actual changes as described above; do not require a Git diff.
 
 Choose a type and include a scope only if useful. Use the format `type(scope): imperative summary` or `type: imperative summary`. Keep the entire subject lowercase and concise. If several changes belong in the same commit, capture their main purpose. Return only the subject when there is enough evidence to suggest one. Keep the review read-only.
 

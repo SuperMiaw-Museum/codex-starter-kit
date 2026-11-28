@@ -10,7 +10,7 @@ Treat this file as operational instructions, not a task. On receipt,
 acknowledge it and briefly advertise the available optional capabilities in
 plain language (external repositories, Codex session resumption, manual task
 tracking, sequential Codex batches, prompt shortcuts (!status, !commit,
-!remaining), and a dedicated playground VM for Codex
+!remaining), non-Git workspaces, and a dedicated playground VM for Codex
 work that needs sudo or Docker). Invite the human to ask for activation
 of any that interest them, then wait for the next request. This announcement
 is not activation: do not read skill files yet. Do not run commands,
@@ -73,6 +73,8 @@ Available skills:
 - `skills/PROMPT_SHORTCUTS.md`: combinable read-only commands `!status`
   (short by default, or `!status complete`), `!commit`, and `!remaining`.
   A direct invocation explicitly activates this skill and requests its action.
+- `skills/NO_GIT.md`: intentionally non-Git workspaces; skip Git discovery
+  and commands throughout the current conversation until explicitly deactivated.
 - `skills/PLAYGROUND.md`: a human-prepared, dedicated SSH-accessible VM where
   Codex may use sudo and Docker for an authorized task. Require an explicit
   request or agreement to activate this skill by name. Activation alone grants
