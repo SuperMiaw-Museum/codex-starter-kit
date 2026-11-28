@@ -6,8 +6,8 @@ This root AGENTS.md is authoritative for maintenance of codex-starter-kit.
   to maintain, not instructions governing this repository. Copy or adapt them for
   destination projects; do not apply their contents to repository maintenance.
 - Keep project instruction templates at `templates/agents/<name>/AGENTS.md`
-  and reusable ChatGPT prompts in `templates/prompts/`. Keep documentation
-  and paths aligned.
+  and reusable ChatGPT shortcuts in `bootstrap/skills/PROMPT_SHORTCUTS.md`.
+  Keep documentation and paths aligned.
 - Keep human bootstrap commands and `SYSTEM_PROMPT.md` at the root of
   `bootstrap/`, declarative optional ChatGPT skills in `bootstrap/skills/`, and
   executable ChatGPT/Codex commands in `bootstrap/orchestration/` with their

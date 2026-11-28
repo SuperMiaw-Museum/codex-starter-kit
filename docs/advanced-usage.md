@@ -74,5 +74,9 @@ The session must already exist locally. An invalid or unavailable session fails 
 ## Project resources
 
 Adapt an [AGENTS.md template](../templates/agents/) for project-specific instructions.
-Use the [reusable prompts](../templates/prompts/) in ChatGPT for project status,
-commit message suggestions, or remaining work.
+## Prompt shortcuts
+
+Use `!status` for a short project report, `!status complete` for a detailed
+report, `!commit` for a suggested commit subject, or `!remaining` for remaining
+work. Combine them in one request, for example `!status !commit !remaining`.
+These shortcuts are read-only and activate automatically when requested.
