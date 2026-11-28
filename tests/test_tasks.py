@@ -140,7 +140,8 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(started.stderr.count('START Codex'), 1)
         self.assertEqual(started.stdout.count('ERROR Codex'), 1)
         record = json.loads(receipt.read_bytes())
-        self.assertEqual((record['attempt_id'], record['project']), ('test-attempt', str(self.root)))
+        self.assertEqual((record['version'], record['attempt_id'], record['task_id'], record['project']),
+                         (2, 'test-attempt', 'test-attempt', str(self.root)))
         self.assertEqual(record['result'], dict(kind='codex', exit_code=75, process_exit=75,
                                                signal=None, stage=None, capture_failed=False))
         self.assertEqual(retry.returncode, 2, retry.stderr)
@@ -217,7 +218,7 @@ class TaskTests(unittest.TestCase):
         self.fake_lock_codex('raise SystemExit(0)\n')
         state_module = self.bundle / 'internal/batch_state.py'
         source = state_module.read_text()
-        write = '        write_state(self.receipt, dict(self.identity, result=asdict(result)), replace=False)'
+        write = '        write_state(self.receipt, dict(self.identity, result=asdict(result)))'
         self.assertIn(write, source)
         barrier = ("        import time\n"
                    "        self.receipt.with_name('at-publication').touch()\n"

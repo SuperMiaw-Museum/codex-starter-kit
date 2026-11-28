@@ -29,4 +29,6 @@ and the SSH hook invokes `bootstrap/remote-control.sh`.
 ![Architecture](../assets/architecture.svg)
 
 See [Security](security.md), [Bootstrap](bootstrap.md), and
-[Notifications](notifications.md) for operational contracts.
+[Notifications](notifications.md) for operational contracts. The
+[BATCH contract](batch-execution.md) covers DAG scheduling and shared resource
+coordination with the direct runner.

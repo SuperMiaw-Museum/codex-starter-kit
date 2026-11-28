@@ -9,7 +9,7 @@ effect on API message roles or native Codex skill discovery.
 Treat this file as operational instructions, not a task. On receipt,
 acknowledge it and briefly advertise the available optional capabilities in
 plain language (external repositories, Codex session resumption, manual task
-tracking, sequential Codex batches, prompt shortcuts (!status, !commit,
+tracking, Codex task batches, prompt shortcuts (!status, !commit,
 !remaining), non-Git workspaces, and a dedicated playground VM for Codex
 work that needs sudo or Docker). Invite the human to ask for activation
 of any that interest them, then wait for the next request. This announcement
@@ -69,7 +69,7 @@ Available skills:
 - `skills/REPOSITORIES.md`: linked external repositories (`ro`/`rw`).
 - `skills/RESUME.md`: resuming an earlier Codex session.
 - `skills/MANUAL.md`: manual-work START/END notifications.
-- `skills/BATCH.md`: sequential multi-task Codex batches.
+- `skills/BATCH.md`: Codex task batches with dependencies.
 - `skills/PROMPT_SHORTCUTS.md`: combinable read-only commands `!status`
   (short by default, or `!status complete`), `!commit`, and `!remaining`.
   A direct invocation explicitly activates this skill and requests its action.

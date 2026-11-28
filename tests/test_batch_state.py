@@ -26,34 +26,40 @@ class BatchStateTests(unittest.TestCase):
         project = self.root / 'repo'
         project.mkdir()
         (self.root / 'alias').symlink_to(project, target_is_directory=True)
-        tasks = [{'id': 'b', 'prompt': 'First'}, {'id': 'a', 'prompt': 'Second'}]
-        raw = json.dumps(dict(version=1, project='alias', tasks=tasks))
+        tasks = [{'id': 'b', 'project': 'alias', 'prompt': 'First'},
+                 {'id': 'a', 'project': 'alias', 'prompt': 'Second', 'depends_on': ['b']}]
+        raw = json.dumps(dict(version=2, tasks=tasks))
         self.assertEqual(self.module.parse_manifest(raw, base=self.root),
-                         dict(version=1, project=str(project), tasks=tasks))
+                         dict(version=2, max_parallel=1, tasks=[
+                             dict(tasks[0], project=str(project), depends_on=[]),
+                             dict(tasks[1], project=str(project)),
+                         ]))
 
     def test_manifest_refuses_unsupported_or_ambiguous_input(self):
+        task = dict(id='a', project='.', prompt='x')
         for raw in (
-            '{"version":1,"version":1,"project":".","tasks":[]}',
-            '{"version":true,"project":".","tasks":[{"id":"a","prompt":"x"}]}',
-            '{"version":1,"project":".","tasks":[]}',
-            '{"version":1,"project":".","tasks":[{"id":"a","prompt":"x"},{"id":"a","prompt":"y"}]}',
-            '{"version":1,"project":".","tasks":[{"id":"a","prompt":"x","mode":"read"}]}',
-            '{"version":1,"project":".","tasks":[{"id":"../a","prompt":"x"}]}',
+            '{"version":2,"version":2,"tasks":[]}',
+            json.dumps(dict(version=True, tasks=[task])),
+            json.dumps(dict(version=2, tasks=[])),
+            json.dumps(dict(version=2, tasks=[task, task])),
+            json.dumps(dict(version=2, tasks=[dict(task, mode='read')])),
+            json.dumps(dict(version=2, tasks=[dict(task, id='../a')])),
         ):
             with self.subTest(raw=raw), self.assertRaises(ValueError):
                 self.module.parse_manifest(raw, base=self.root)
 
-    def test_atomic_state_replacement_and_failure(self):
+    def test_state_publication_is_atomic_and_immutable(self):
         state = self.root / 'state.json'
+        with patch.object(self.module.os, 'link', side_effect=OSError('simulated failure')):
+            with self.assertRaises(OSError):
+                self.module.write_state(state, {'stage': 'pending'})
+        self.assertEqual(list(self.root.iterdir()), [])
         self.module.write_state(state, {'stage': 'pending'})
         self.assertEqual(stat.S_IMODE(state.stat().st_mode), 0o600)
-        with patch.object(self.module.os, 'replace', side_effect=OSError('simulated failure')):
-            with self.assertRaises(OSError):
-                self.module.write_state(state, {'stage': 'running'})
+        with self.assertRaises(FileExistsError):
+            self.module.write_state(state, {'stage': 'running'})
         self.assertEqual(json.loads(state.read_bytes()), {'stage': 'pending'})
         self.assertEqual(list(self.root.iterdir()), [state])
-        self.module.write_state(state, {'stage': 'running'})
-        self.assertEqual(json.loads(state.read_bytes()), {'stage': 'running'})
 
     def test_state_refuses_shared_directory(self):
         self.root.chmod(0o755)
@@ -65,7 +71,7 @@ class BatchStateTests(unittest.TestCase):
     def test_attempt_needs_durable_receipt_before_it_is_finished(self):
         project = self.root / 'repo'
         project.mkdir()
-        attempt = self.module.Attempt('example', project, self.root / 'receipt.json')
+        attempt = self.module.Attempt('example', project, self.root / 'receipt.json', 'task')
         self.assertEqual(attempt.status(), ('not_started', None))
         attempt.claim()
         self.assertEqual(attempt.status(), ('unknown', None))
@@ -85,22 +91,22 @@ class BatchStateTests(unittest.TestCase):
     def test_attempt_rejects_bad_receipt_identity_or_result(self):
         project = self.root / 'repo'
         project.mkdir()
-        attempt = self.module.Attempt('example', project, self.root / 'receipt.json')
+        attempt = self.module.Attempt('example', project, self.root / 'receipt.json', 'task')
         attempt.claim()
         self.module.write_state(attempt.receipt, dict(attempt.identity, attempt_id='different',
                                                      result={'kind': 'codex', 'exit_code': 0}))
         with self.assertRaisesRegex(ValueError, 'identity'):
             attempt.status()
-        self.module.write_state(attempt.receipt, dict(attempt.identity, result={
-            'kind': 'codex', 'exit_code': 0, 'process_exit': 7,
-        }))
+        attempt.receipt.unlink()
+        self.module.write_state(attempt.receipt, dict(attempt.identity, result=self.module.asdict(
+            self.module.RunResult('codex', 0, process_exit=7))))
         with self.assertRaisesRegex(ValueError, 'Invalid receipt result'):
             attempt.status()
 
     def test_attempt_with_uncertain_quiescence_stays_unknown(self):
         project = self.root / 'repo'
         project.mkdir()
-        attempt = self.module.Attempt('uncertain', project, self.root / 'receipt.json')
+        attempt = self.module.Attempt('uncertain', project, self.root / 'receipt.json', 'task')
         attempt.claim()
         result = self.module.RunResult('unknown', 76, process_exit=0, stage='quiescence')
         attempt.finish(result)

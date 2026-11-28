@@ -247,7 +247,7 @@ def terminal_text(value):
                    else char.encode('unicode_escape').decode('ascii') for char in value)
 
 
-def capture(path, session_output='', protected_output=''):
+def capture(path, session_output='', protected_output='', session_record=''):
     render = terminal_text if protected_output else str
     session = None
     with open(path, 'w', encoding='utf-8', buffering=1) as metadata:
@@ -257,6 +257,17 @@ def capture(path, session_output='', protected_output=''):
                 session = session_id(event.get('thread_id'))
                 if session is not None:
                     print(json.dumps({'session': session}), file=metadata, flush=True)
+                    if session_record:
+                        from batch_state import read_text, unique_object, write_state
+
+                        claim = Path(session_record)
+                        try:
+                            identity = json.loads(read_text(claim, limit=4096, private=True),
+                                                  object_pairs_hook=unique_object)
+                            write_state(claim.with_suffix('.session'),
+                                        dict(identity, session_id=session))
+                        except (OSError, ValueError) as error:
+                            print(f'Could not preserve session metadata: {error}', file=sys.stderr)
             elif kind == 'turn.completed':
                 usage = event.get('usage')
                 if isinstance(usage, dict):

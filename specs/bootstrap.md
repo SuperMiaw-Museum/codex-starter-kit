@@ -2,7 +2,7 @@
 
 1. **Prepare the VM.** Follow the [security requirements](../docs/requirements.md#security-reminders) before connecting. Use a
    nonprivileged account without administrative access. Install Bash, Git,
-   Python 3.8 or newer, Node.js with npm/npx, Codex CLI, and your project's tools. Complete
+   Python 3.8 or newer (Python 3.9 or newer for [BATCH](batch-execution.md)), Node.js with npm/npx, Codex CLI, and your project's tools. Complete
    Codex sign-in as that account.
 
 2. **Clone this kit on the VM.** In that account's terminal, replace the placeholder

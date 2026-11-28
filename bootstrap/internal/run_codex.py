@@ -200,7 +200,7 @@ def cancelled_result(number, process_exit=None, *, capture_failed=False):
 
 
 def execute(command, project, env, task_file, metadata, cancelled, session_file=None,
-            report_capture_error=capture_error, lock_fds=(), *, protected=False):
+            report_capture_error=capture_error, lock_fds=(), *, protected=False, session_record=None):
     """Run the mission, preserving Codex's status independently of JSON capture."""
     if protected and metadata is None:
         raise ValueError('Protected execution requires captured output')
@@ -233,8 +233,10 @@ def execute(command, project, env, task_file, metadata, cancelled, session_file=
             parser_args = [sys.executable, '-B', str(INTERNAL / 'codex_notice.py'), str(metadata)]
             if session_file:
                 parser_args.append(str(session_file))
-            elif protected:
-                parser_args.extend(['', '1'])
+            elif protected or session_record:
+                parser_args.extend(['', '1' if protected else ''])
+            if session_record:
+                parser_args.append(str(session_record))
             try:
                 parser = subprocess.Popen(parser_args, cwd=project, env=env, stdin=child.stdout)
             except OSError as error:
@@ -322,6 +324,7 @@ def execute(command, project, env, task_file, metadata, cancelled, session_file=
 def pane_worker(directory):
     """Run inside tmux; the outer supervisor owns registry transitions."""
     command, project, capture = json.loads((directory / 'launch.json').read_text())
+    enable_subreaper()
     with handled_signals() as received:
         def cancelled():
             if received():
@@ -345,6 +348,10 @@ def pane_worker(directory):
         except OSError as error:
             print(f'Could not launch Codex: {error}', file=sys.stderr, flush=True)
             code = 127
+        if descendants_quiescent():
+            (directory / 'quiescent').touch()
+        else:
+            code = project_lock.UNKNOWN_EXIT
         result = directory / 'status.tmp'
         result.write_text(f'{code}\n')
         result.replace(directory / 'status')
@@ -401,14 +408,16 @@ def attachment(directory, name):
 
 
 def supervise(project, resume, body, label, full, executable, tmux, cancelled, lock_fds,
-              protected_command=None):
+              protected_command=None, *, resources, session_record=None):
     env = dict(os.environ)
     env['PATH'] = str(Path(executable).parent) + os.pathsep + env.get('PATH', os.defpath)
     registered_token = None
     result = RunResult('infrastructure_error', 1, stage='prepare')
     metadata = None
     capture_setup_failed = False
-    fence = None
+    fences = project_lock.ExecutionFences()
+    fenced = False
+    tmux_started = False
 
     def notify(message, phase, code, *, token=None, **details):
         nonlocal registered_token
@@ -438,8 +447,8 @@ def supervise(project, resume, body, label, full, executable, tmux, cancelled, l
             except (OSError, ValueError, TypeError, KeyError) as error:
                 print(f'Task registry: {error}', file=sys.stderr)
             if not cancelled():
-                if not tmux:
-                    fence = project_lock.arm_fence(project)
+                fenced = True
+                fences.arm(resources)
                 command, capture = ((protected_command, True) if protected_command
                                     else codex_command(executable, project, resume, env, cancelled))
                 metadata = directory / 'metadata' if capture else None
@@ -456,11 +465,13 @@ def supervise(project, resume, body, label, full, executable, tmux, cancelled, l
                         capture_setup_failed = True
                 if not cancelled():
                     if tmux:
+                        tmux_started = True
                         code = inspect(tmux, directory, name, project, command, capture, env, cancelled)
                         result = RunResult('tmux', code)
                     else:
                         result = execute(command, project, env, task_file, metadata, cancelled,
-                                         lock_fds=lock_fds, protected=protected_command is not None)
+                                         lock_fds=lock_fds, protected=protected_command is not None,
+                                         session_record=session_record)
             if cancelled():
                 result = cancelled_result(cancelled(), result.process_exit, capture_failed=result.capture_failed)
         except (OSError, subprocess.TimeoutExpired) as error:
@@ -468,10 +479,11 @@ def supervise(project, resume, body, label, full, executable, tmux, cancelled, l
             result = (cancelled_result(cancelled()) if cancelled()
                       else RunResult('infrastructure_error', 1, stage='handoff'))
         finally:
-            if fence is not None:
+            if fenced:
                 try:
-                    if descendants_quiescent():
-                        project_lock.clear_fence(fence)
+                    if (descendants_quiescent()
+                            and (not tmux_started or (directory / 'quiescent').is_file())):
+                        fences.clear()
                     else:
                         raise project_lock.ProjectUnknown
                 except (OSError, project_lock.ProjectUnknown):
@@ -482,6 +494,8 @@ def supervise(project, resume, body, label, full, executable, tmux, cancelled, l
                         print('Observed children: ' + ', '.join(observed), file=sys.stderr, flush=True)
                     result = RunResult('unknown', project_lock.UNKNOWN_EXIT, process_exit=result.process_exit,
                                        signal=result.signal, stage='quiescence', capture_failed=result.capture_failed)
+                finally:
+                    fences.close()
             if registered_token:
                 try:
                     task_registry.end(registered_token, result.exit_code, metadata=metadata, notify=notify,
@@ -493,10 +507,12 @@ def supervise(project, resume, body, label, full, executable, tmux, cancelled, l
     return replace(result, capture_failed=True) if capture_setup_failed else result
 
 
-def run_task(task, reservation_fd, live, cancelled, isolation=None, *, cooperative_batch=False):
+def run_task(task, reservation_fd, live, cancelled, isolation=None, *, cooperative_batch=False,
+             resources=None, resource_fds=None, reserved_modes=None, session_record=None):
     if cancelled():
         return cancelled_result(cancelled())
-    if cooperative_batch and (reservation_fd is None or live or isolation is not None):
+    if cooperative_batch and ((reservation_fd is None and resource_fds is None)
+                              or live or isolation is not None):
         raise ValueError('Cooperative batch requires a direct project reservation')
     if reservation_fd is not None and isolation is None and not cooperative_batch:
         try:
@@ -515,10 +531,17 @@ def run_task(task, reservation_fd, live, cancelled, isolation=None, *, cooperati
             print('CODEX_STARTER_KIT_LIVE_INSPECT=1 requires tmux in PATH', file=sys.stderr)
             return RunResult('infrastructure_error', 127, stage='launch')
     try:
-        with project_lock.project_execution(task[0], reservation_fd) as lock_fds:
+        current_resources = project_lock.task_resources(task[0])
+        if resources is not None and current_resources != resources:
+            raise ValueError('Repository resources changed since the batch snapshot')
+        resources = current_resources
+        with project_lock.project_execution(task[0], reservation_fd, resources=resources,
+                                            resource_fds=resource_fds,
+                                            reserved_modes=reserved_modes) as lock_fds:
             try:
-                if not live:
-                    enable_subreaper()
+                if project_lock.task_resources(task[0]) != resources:
+                    raise ValueError('Repository resources changed during admission')
+                enable_subreaper()
                 protected_command = None
                 if isolation is not None:
                     if live or reservation_fd is None:
@@ -527,7 +550,7 @@ def run_task(task, reservation_fd, live, cancelled, isolation=None, *, cooperati
                     protected_command = isolation.command(task[1])
                 return supervise(*task, os.path.abspath(executable), tmux, cancelled,
                                  () if cooperative_batch else lock_fds,
-                                 protected_command)
+                                 protected_command, resources=resources, session_record=session_record)
             except (OSError, ValueError) as error:
                 print(f'Codex handoff: {error}', file=sys.stderr)
                 return RunResult('infrastructure_error', 2, stage='handoff')
@@ -566,7 +589,7 @@ def main(args, *, offline_isolation_factory=None):
         if offline_isolation_factory is not None and (reservation_fd is None or request is None):
             raise ValueError('Offline fixture requires a reservation and a receipt')
         task = task_input(args)
-        attempt = Attempt(request[0], task[0], request[1]) if request else None
+        attempt = Attempt(request[0], task[0], request[1], task_id=request[0]) if request else None
         isolation = None
         if offline_isolation_factory is not None:
             isolation = offline_isolation_factory(
